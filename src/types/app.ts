@@ -1,83 +1,186 @@
-export type ActiveTab = 'catalog' | 'automated' | 'forex' | 'charts' | 'settings';
+export type ThemeMode = 'system' | 'light' | 'dark';
 
-export type PaymentMethod = 'mpesa_stk' | 'mpesa_pochi' | 'paypal';
+export type ActiveRoute =
+  | 'home'
+  | 'catalog'
+  | 'automated'
+  | 'scanner'
+  | 'charts'
+  | 'markets'
+  | 'trades'
+  | 'po'
+  | 'news'
+  | 'forex'
+  | 'aiscan'
+  | 'engine'
+  | 'broker'
+  | 'settings'
+  | 'admin';
 
-export interface GeoInfo {
+export type PaymentMethod = 'pochi' | 'stk' | 'paypal' | 'usdt';
+
+export interface ServerConfig {
+  pochi: string;
+  pochiNumber: string;
+  whatsapp: string;
+  whatsappNumber: string;
+  paypal: string;
+  paypalConfigured: boolean;
+  mpesaConfigured: boolean;
+  paystackConfigured: boolean;
+  usdtAddress: string;
+  usdtNetwork: string;
+  usdRate: number;
+  usdKshRate: number;
+  showUsdForeign: boolean;
+  maintenance: boolean;
   country: string;
   isKenya: boolean;
   currency: {
     code: string;
-    rateFromUsd: number;
+    rate: number;
+    approx?: boolean;
   };
-  mpesaConfigured: boolean;
-  paypalConfigured: boolean;
-  pochiNumber: string;
-  whatsappNumber: string;
-  usdKshRate: number;
+  payMode: 'manual' | 'both' | 'stk';
+  rawPayMode: string;
+  provider: string | null;
+}
+
+export interface OrderRecord {
+  ref: string;
+  t: number;
+  botId: string;
+  botName?: string;
+  price: number;
+  usd: number;
+  method: string;
+  proof?: string;
+  mpesa?: string;
+  info?: { code?: string; amount?: number; amountOk?: boolean; toOwner?: boolean };
+  whatsapp?: string;
+  account: string;
+  email: string;
+  name?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectReason?: string;
+  refundNote?: string;
+  mailed?: boolean;
+  orderKey?: string;
 }
 
 export interface UserProfile {
   uid: string;
-  displayName: string;
   email: string;
+  name: string;
+  verified: boolean;
   country: string;
-  theme: 'light' | 'dark';
+  theme: ThemeMode;
+  isAdmin: boolean;
+  engine: boolean;
   licenses: string[];
-  signalSubEnd: number;
+  subEnd: number;
+  aiLeft: number;
+  aiFreeUsed: boolean;
+  freeTrial: {
+    state: 'none' | 'pending' | 'active' | 'done';
+    sig?: ForexSignal;
+    t?: number;
+    started?: number;
+    result?: 'win' | 'loss' | null;
+    closedAt?: number;
+  };
+  orders: OrderRecord[];
+  now: number;
 }
 
-export interface OrderRecord {
+export interface CatalogItem {
   id: string;
-  userId: string;
-  userEmail: string;
-  itemId: string;
-  itemName: string;
-  method: PaymentMethod;
-  status: 'pending' | 'paid' | 'failed' | 'cancelled';
-  amountKsh: number;
-  amountUsd: number;
-  phone: string;
-  reference: string;
-  createdAtMs: number;
+  name: string;
+  section: 'deriv' | 'automated' | 'forex';
+  category: 'over-under' | 'digits' | 'rise-fall' | 'even-odd' | 'accumulators' | 'forex';
+  sub?: string;
+  kind: 'strategy' | 'xml' | 'file' | 'builtin';
+  platform: string;
+  desc: string;
+  how: string;
+  price: number;
+  status: 'live' | 'soon';
+  locked: boolean;
+  presets?: string[] | null;
+  extra?: boolean;
+  hidden?: boolean;
 }
 
-export interface SignalRecord {
+export interface Announcement {
   id: string;
-  pair: string;
-  direction: 'BUY' | 'SELL';
-  entry: string;
-  stopLoss: string;
-  takeProfit: string;
-  timeframe: string;
-  strategy: string;
-  status: 'active' | 'tp_hit' | 'sl_hit' | 'closed';
-  published: boolean;
-  notes: string;
-  authorId: string;
-  createdAtMs: number;
+  message: string;
+  kind: 'info' | 'warning';
+  startAt?: number;
+  endAt?: number;
+  active?: boolean;
 }
 
-export interface Mt5ConfigRecord {
-  id: string;
-  userId: string;
-  eaId: 'xauusd-system' | 'straddle-system';
-  eaKey: string;
+export interface ForexSignal {
+  id?: string;
   symbol: string;
-  mode: 'intraday' | 'scalping';
-  lotSize: number;
-  enabled: boolean;
-  updatedAtMs: number;
+  tf: string;
+  dir: 'BUY' | 'SELL';
+  status: string;
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  rr: number;
+  score: number;
+  max: number;
+  event?: string;
+  killzone?: string;
+  t?: number;
+  published?: boolean;
 }
 
-export interface TradeLogRecord {
+export interface Mt5Position {
+  t: string;
+  s: 'BUY' | 'SELL';
+  l: number;
+  o: number;
+  p: number;
+  a: number;
+}
+
+export interface Mt5RobotStatus {
+  t: number;
+  online: boolean;
+  login: string;
+  server: string;
+  balance: number;
+  equity: number;
+  open: number;
+  today: number;
+  mode: string;
+  state: string;
+  ver: string;
+  symbol: string;
+  pos: Mt5Position[];
+}
+
+export interface DerivAccountInfo {
+  loginid: string;
+  currency: string;
+  balance: number;
+  is_virtual: number;
+  scopes: string[];
+}
+
+export interface TradeLogEntry {
   id: string;
-  userId: string;
+  t: number;
+  symbol: string;
   botId: string;
   botName: string;
-  market: string;
-  contract: string;
+  label?: string;
   stake: number;
   profit: number;
+  won: boolean;
   accountType: 'demo' | 'real';
-  createdAtMs: number;
 }

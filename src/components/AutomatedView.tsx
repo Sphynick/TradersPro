@@ -1,602 +1,630 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { CheckCircle2, Play, Square } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { CATALOG_ITEMS, DERIV_MARKETS, type CatalogItem } from '../data/catalog.ts';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase.ts';
+import { useEffect, useRef, useState } from 'react';
 import {
-  executeDerivContract,
-  subscribeMarketTicks,
-  verifyDerivToken,
-  type TickPoint,
-} from '../services/derivWs.ts';
-import type { TradeLogRecord } from '../types/app.ts';
+  AlertTriangle,
+  Bot,
+  ExternalLink,
+  FileCode2,
+  KeyRound,
+  Play,
+  ShieldAlert,
+  Square,
+  Wallet,
+} from 'lucide-react';
+import { apiFetch } from '../lib/api';
+import { createAiBot } from '../lib/aiBot';
+import { connectDerivAuto, DERIV_APP_ID, DERIV_OAUTH_URL, type DerivClient } from '../lib/derivClient';
+import { createRulesBot } from '../lib/rulesBot';
+import { describeRules } from '../lib/rulesCore';
+import * as LIB from '../lib/scannerCore';
+import { openEntry, vaultText, type VaultEntry } from '../lib/vaultCore';
+import type { CatalogItem, DerivAccountInfo, TradeLogEntry, UserProfile } from '../types/app';
 
 interface AutomatedViewProps {
-  selectedBotId: string;
-  onSelectBotId: (id: string) => void;
-  licenses: string[];
-  isAdmin: boolean;
-  userId: string | null;
+  catalog: CatalogItem[];
+  user: UserProfile | null;
+  selectedBotId: string | null;
+  onSelectBot: (id: string) => void;
   derivToken: string;
-  onSaveDerivToken: (token: string) => void;
-  tradeLogs: TradeLogRecord[];
-  onUnlockBot: (item: CatalogItem) => void;
+  onSetDerivToken: (tok: string) => void;
+  derivAccount: DerivAccountInfo | null;
+  onSetDerivAccount: (acc: DerivAccountInfo | null) => void;
+  onAddTrade: (t: TradeLogEntry) => void;
+  onRunningChange: (running: boolean) => void;
+  onBuy: (item: CatalogItem) => void;
+  onRequireAuth: () => void;
 }
 
 export function AutomatedView({
+  catalog,
+  user,
   selectedBotId,
-  onSelectBotId,
-  licenses,
-  isAdmin,
-  userId,
+  onSelectBot,
   derivToken,
-  onSaveDerivToken,
-  tradeLogs,
-  onUnlockBot,
+  onSetDerivToken,
+  derivAccount,
+  onSetDerivAccount,
+  onAddTrade,
+  onRunningChange,
+  onBuy,
+  onRequireAuth,
 }: AutomatedViewProps) {
-  const automatedBots = useMemo(
-    () => CATALOG_ITEMS.filter((item) => item.section === 'automated'),
-    []
-  );
+  const autoBots = catalog.filter((c) => c.section === 'automated' || c.kind === 'builtin' || c.kind === 'strategy');
+  const activeId = selectedBotId && autoBots.some((b) => b.id === selectedBotId) ? selectedBotId : autoBots[0]?.id || 'engine-ai';
+  const activeBot = autoBots.find((b) => b.id === activeId) || autoBots[0];
 
-  const selectedBot =
-    automatedBots.find((b) => b.id === selectedBotId) || automatedBots[0];
-
-  const isBotUnlocked =
-    selectedBot.builtin || isAdmin || licenses.includes(selectedBot.id);
-
-  const [symbol, setSymbol] = useState<string>('R_100');
-  const marketMeta = DERIV_MARKETS.find((m) => m.symbol === symbol) || DERIV_MARKETS[4];
-
-  const [wsStatus, setWsStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
-  const [ticks, setTicks] = useState<TickPoint[]>([]);
-  const [tokenInput, setTokenInput] = useState(derivToken);
-  const [accountInfo, setAccountInfo] = useState<{
-    balance: number;
-    currency: string;
-    isVirtual: boolean;
-    loginid: string;
-  } | null>(null);
-  const [tokenError, setTokenError] = useState('');
-  const [verifying, setVerifying] = useState(false);
-
-  const [contractType, setContractType] = useState<
-    'DIGITOVER' | 'DIGITUNDER' | 'DIGITEVEN' | 'DIGITODD' | 'DIGITDIFF' | 'DIGITMATCH' | 'CALL' | 'PUT'
-  >('DIGITOVER');
-  const [barrier, setBarrier] = useState('1');
-  const [stake, setStake] = useState('1');
-  const [takeProfit, setTakeProfit] = useState('10');
-  const [stopLoss, setStopLoss] = useState('10');
-
+  const [accountPref, setAccountPref] = useState<'demo' | 'real'>('demo');
+  const [stake, setStake] = useState(0.5);
+  const [stopLoss, setStopLoss] = useState(10);
+  const [takeProfit, setTakeProfit] = useState(15);
   const [running, setRunning] = useState(false);
-  const [sessionPnl, setSessionPnl] = useState(0);
-  const [runStatus, setRunStatus] = useState('Ready to trade on demo or real account.');
+  const [starting, setStarting] = useState(false);
+  const [err, setErr] = useState('');
+  const [showRealConfirm, setShowRealConfirm] = useState(false);
 
-  const runningRef = useRef(false);
-  const sessionPnlRef = useRef(0);
-  const busyTradeRef = useRef(false);
+  // Live runner telemetry state
+  const [sessionState, setSessionState] = useState({ pnl: 0, wins: 0, losses: 0, trades: 0, open: 'none', market: '-' });
+  const [aiRows, setAiRows] = useState<Array<{ symbol: string; ticks: number; score: number; label: string | null }>>([]);
+  const [aiHeadline, setAiHeadline] = useState('Ready to scan markets');
+  const [aiLiveProfit, setAiLiveProfit] = useState<number | null>(null);
+  const [logs, setLogs] = useState<Array<{ id: string; time: string; msg: string; level: string }>>([]);
+  const [recentTrades, setRecentTrades] = useState<TradeLogEntry[]>([]);
+  const [xmlPreview, setXmlPreview] = useState('');
 
-  useEffect(() => {
-    setTokenInput(derivToken);
-  }, [derivToken]);
+  const clientRef = useRef<DerivClient | null>(null);
+  const runnerRef = useRef<{ start: () => Promise<void>; stop: () => Promise<void> } | null>(null);
 
-  useEffect(() => {
-    const unsub = subscribeMarketTicks(
-      symbol,
-      marketMeta.pip,
-      (_tick, history) => {
-        setTicks(history);
-      },
-      (status) => setWsStatus(status)
-    );
-    return unsub;
-  }, [symbol, marketMeta.pip]);
+  const licenses = new Set(user?.licenses || []);
+  const unlocked = activeBot && (activeBot.id === 'engine-ai' || !activeBot.locked || user?.isAdmin || licenses.has(activeBot.id));
 
-  const digitStats = useMemo(() => {
-    const counts = Array(10).fill(0);
-    for (const t of ticks) {
-      if (t.lastDigit >= 0 && t.lastDigit <= 9) counts[t.lastDigit] += 1;
-    }
-    const total = ticks.length || 1;
-    return counts.map((count, digit) => ({
-      digit,
-      count,
-      pct: Math.round((count / total) * 100),
-    }));
-  }, [ticks]);
-
-  const evenPct = useMemo(() => {
-    if (!ticks.length) return 50;
-    const evens = ticks.filter((t) => t.lastDigit % 2 === 0).length;
-    return Math.round((evens / ticks.length) * 100);
-  }, [ticks]);
-
-  const latestTick = ticks[ticks.length - 1];
-
-  const handleVerifyToken = async () => {
-    setVerifying(true);
-    setTokenError('');
-    const res = await verifyDerivToken(tokenInput);
-    setVerifying(false);
-    if (!res.ok) {
-      setAccountInfo(null);
-      setTokenError(res.error || 'Token check failed.');
-      return;
-    }
-    onSaveDerivToken(tokenInput.trim());
-    setAccountInfo({
-      balance: res.balance || 0,
-      currency: res.currency || 'USD',
-      isVirtual: Boolean(res.isVirtual),
-      loginid: res.loginid || '',
-    });
+  const appendLog = (msg: string, level = 'info') => {
+    const entry = { id: Math.random().toString(36).slice(2), time: new Date().toLocaleTimeString(), msg, level };
+    setLogs((prev) => [entry, ...prev].slice(0, 80));
   };
 
-  const recordTrade = async (profit: number, stakeAmt: number) => {
-    if (!userId) return;
+  useEffect(() => {
+    return () => {
+      try {
+        void runnerRef.current?.stop();
+      } catch {}
+      try {
+        clientRef.current?.close();
+      } catch {}
+    };
+  }, []);
+
+  const stopBot = async () => {
+    setRunning(false);
+    onRunningChange(false);
     try {
-      await addDoc(collection(db, 'tradeLogs'), {
-        userId,
-        botId: selectedBot.id,
-        botName: selectedBot.name.slice(0, 100),
-        market: symbol,
-        contract: contractType,
-        stake: stakeAmt,
-        profit,
-        accountType: accountInfo?.isVirtual === false ? 'real' : 'demo',
-        createdAt: serverTimestamp(),
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'tradeLogs');
-    }
+      await runnerRef.current?.stop();
+    } catch {}
+    try {
+      clientRef.current?.close();
+    } catch {}
+    runnerRef.current = null;
+    clientRef.current = null;
   };
 
-  const executeOneTrade = async () => {
+  const launchBot = async (skipRealWarn = false) => {
+    if (!activeBot) return;
+    if (activeBot.id !== 'engine-ai' && !user) return onRequireAuth();
+    if (!unlocked) return onBuy(activeBot);
     if (!derivToken.trim()) {
-      setRunStatus('Paste and connect your Deriv API token first.');
-      setRunning(false);
-      runningRef.current = false;
+      setErr('Connect Deriv via OAuth or paste your Deriv API token (Read + Trade only).');
       return;
     }
-    if (busyTradeRef.current) return;
-    busyTradeRef.current = true;
-    const stakeAmt = Math.max(0.35, Number(stake) || 1);
-    const needsBarrier = ['DIGITOVER', 'DIGITUNDER', 'DIGITDIFF', 'DIGITMATCH'].includes(contractType);
-
-    setRunStatus(`Executing ${contractType} on ${symbol}...`);
-    const res = await executeDerivContract({
-      token: derivToken,
-      symbol,
-      contractType,
-      amount: stakeAmt,
-      duration: contractType === 'CALL' || contractType === 'PUT' ? 5 : 1,
-      barrier: needsBarrier ? barrier : undefined,
-    });
-    busyTradeRef.current = false;
-
-    if (!res.ok) {
-      setRunStatus(res.error || 'Trade failed.');
-      setRunning(false);
-      runningRef.current = false;
+    if (accountPref === 'real' && !skipRealWarn) {
+      setShowRealConfirm(true);
       return;
     }
 
-    const profit = Number(res.profit || 0);
-    const nextPnl = Number((sessionPnlRef.current + profit).toFixed(2));
-    sessionPnlRef.current = nextPnl;
-    setSessionPnl(nextPnl);
-    if (accountInfo) {
-      setAccountInfo({ ...accountInfo, balance: Number((accountInfo.balance + profit).toFixed(2)) });
-    }
-    setRunStatus(
-      `Contract #${res.contractId} settled: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`
-    );
-    await recordTrade(profit, stakeAmt);
+    setShowRealConfirm(false);
+    setErr('');
+    setStarting(true);
+    setLogs([]);
+    setAiRows([]);
+    setAiLiveProfit(null);
+    setAiHeadline('Connecting to Deriv...');
 
-    const tp = Math.abs(Number(takeProfit) || 10);
-    const sl = Math.abs(Number(stopLoss) || 10);
-    if (nextPnl >= tp) {
-      setRunStatus(`Take profit target ($${tp}) reached. Bot stopped.`);
+    try {
+      const { client, account } = await connectDerivAuto(derivToken.trim(), accountPref, (traceMsg) =>
+        appendLog(traceMsg, 'info')
+      );
+      clientRef.current = client;
+      onSetDerivAccount(account);
+      appendLog(
+        `Connected ${account.loginid} (${account.is_virtual ? 'DEMO' : 'REAL'} · ${account.balance.toFixed(2)} ${account.currency}).`,
+        'ok'
+      );
+
+      client.onclose = () => {
+        setRunning(false);
+        onRunningChange(false);
+        appendLog('Connection to Deriv closed.', 'warn');
+      };
+
+      let blobUrlToRevoke: string | null = null;
+      const ctx: any = {
+        client,
+        account,
+        config: { stake: Number(stake) || 0.5, stopLoss: Number(stopLoss) || 0, takeProfit: Number(takeProfit) || 0 },
+        log: appendLog,
+        lib: LIB,
+        engine: {
+          status: () => apiFetch('/engine/status'),
+          signals: (mkt: string) => apiFetch(`/engine/signals?mkt=${encodeURIComponent(mkt || 'digits')}`),
+        },
+        ai: (e: any) => {
+          if (e.type === 'scan' && Array.isArray(e.rows)) {
+            setAiRows(e.rows);
+          } else if (e.type === 'market') {
+            setAiHeadline(e.why || `Market locked: ${LIB.marketName(e.symbol)}`);
+          } else if (e.type === 'placing' || e.type === 'placed') {
+            setAiHeadline(`Active Trade: ${LIB.marketName(e.symbol)} (${e.label}) · Stake ${e.stake}`);
+            setAiLiveProfit(0);
+          } else if (e.type === 'live') {
+            setAiLiveProfit(Number(e.profit));
+          } else if (e.type === 'result') {
+            setAiLiveProfit(null);
+            const tEntry: TradeLogEntry = {
+              id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+              t: Date.now(),
+              symbol: e.symbol || '-',
+              botId: activeBot.id,
+              botName: activeBot.name,
+              stake: Number(stake) || 0.5,
+              profit: Number(e.profit) || 0,
+              won: !!e.won,
+              accountType: account.is_virtual ? 'demo' : 'real',
+            };
+            setRecentTrades((prev) => [tEntry, ...prev].slice(0, 40));
+            onAddTrade(tEntry);
+          }
+        },
+        onState: (s: any) => {
+          setSessionState((prev) => ({ ...prev, ...s }));
+        },
+        finish: () => {
+          if (blobUrlToRevoke) URL.revokeObjectURL(blobUrlToRevoke);
+          setRunning(false);
+          onRunningChange(false);
+        },
+      };
+
+      let runner: { start: () => Promise<void>; stop: () => Promise<void> };
+      if (activeBot.id === 'engine-ai') {
+        runner = createAiBot(ctx);
+      } else {
+        const keyRes = await apiFetch<{ key: string }>(`/license/key?bot=${encodeURIComponent(activeBot.id)}`);
+        let entry: VaultEntry | null = null;
+        const staticRes = await fetch(`/vault/${encodeURIComponent(activeBot.id)}.json`).catch(() => null);
+        if (staticRes && staticRes.ok) {
+          entry = (await staticRes.json()) as VaultEntry;
+        } else {
+          entry = await apiFetch<VaultEntry>(`/botfile?id=${encodeURIComponent(activeBot.id)}`);
+        }
+        if (!entry) throw new Error('Encrypted bot bundle could not be loaded.');
+        const opened = await openEntry(entry, keyRes.key);
+        if (!opened) throw new Error('Decryption key did not match this bot.');
+        const code = vaultText(opened.bytes);
+
+        if (entry.mime === 'application/json' || code.trim().startsWith('{')) {
+          const parsed = JSON.parse(code);
+          runner = createRulesBot(parsed.rules || parsed, ctx);
+        } else {
+          const blob = new Blob([code], { type: 'text/javascript' });
+          blobUrlToRevoke = URL.createObjectURL(blob);
+          const mod = await import(/* @vite-ignore */ blobUrlToRevoke);
+          runner = mod.create(ctx);
+        }
+      }
+
+      runnerRef.current = runner;
+      setRunning(true);
+      onRunningChange(true);
+      await runner.start();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not start the bot.');
       setRunning(false);
-      runningRef.current = false;
-    } else if (nextPnl <= -sl) {
-      setRunStatus(`Stop loss limit (-$${sl}) reached. Bot stopped.`);
-      setRunning(false);
-      runningRef.current = false;
+      onRunningChange(false);
+      try {
+        clientRef.current?.close();
+      } catch {}
+    } finally {
+      setStarting(false);
     }
   };
 
-  useEffect(() => {
-    if (!running) return;
-    const interval = setInterval(() => {
-      if (runningRef.current && !busyTradeRef.current) {
-        executeOneTrade();
-      }
-    }, 3500);
-    return () => clearInterval(interval);
-  });
-
-  const toggleRun = () => {
-    if (!isBotUnlocked) {
-      onUnlockBot(selectedBot);
-      return;
-    }
-    if (running) {
-      runningRef.current = false;
-      setRunning(false);
-      setRunStatus('Bot stopped by user.');
-    } else {
-      if (!accountInfo && !derivToken.trim()) {
-        setRunStatus('Connect a Deriv API token (Demo recommended) before starting.');
+  const inspectXmlFile = async (file: File) => {
+    const text = await file.text();
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.trigger && parsed.contract) {
+        setXmlPreview(describeRules(parsed));
         return;
       }
-      sessionPnlRef.current = 0;
-      setSessionPnl(0);
-      runningRef.current = true;
-      setRunning(true);
-      executeOneTrade();
-    }
+    } catch {}
+    const blocks = (text.match(/<block /g) || []).length;
+    setXmlPreview(`Loaded XML file "${file.name}" (${blocks} Deriv Bot blocks). To run XML files, import into bot.deriv.com or convert rules in Admin Bot Studio.`);
   };
 
+  const oauthHref = `${DERIV_OAUTH_URL}?app_id=${encodeURIComponent(DERIV_APP_ID)}&l=EN&brand=traderspro254`;
+
   return (
-    <div className="space-y-6">
-      {/* Header & Market Selector */}
-      <div className="flex flex-col gap-4 border-b border-[#E0E3EB] pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-[#1E222D]">
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-xs font-medium text-[#787B86]">
-            Deriv WebSocket Engine · {wsStatus === 'live' ? 'Live Stream' : wsStatus === 'connecting' ? 'Connecting...' : 'Reconnecting'}
+          <h1 className="font-display text-xl font-bold text-slate-900 dark:text-white">Automated Trading Runner</h1>
+          <p className="text-xs text-slate-500 dark:text-[#787B86] mt-0.5">
+            Runs straight in your browser over Deriv&apos;s official WebSocket. Your token stays on this device only.
           </p>
-          <h1 className="font-display mt-1 text-2xl font-bold text-[#131722] dark:text-[#F0F3FA] sm:text-3xl">
-            Automated Runner & Digit Scanner
-          </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            aria-label="Select synthetic market"
-            className="h-9 rounded border border-[#E0E3EB] bg-white px-3 text-sm font-medium text-[#131722] focus:border-[#2962FF] focus:outline-none dark:border-[#2A2E39] dark:bg-[#0D1017] dark:text-[#F0F3FA]"
-          >
-            {DERIV_MARKETS.map((m) => (
-              <option key={m.symbol} value={m.symbol}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-
-          <div className="rounded border border-[#E0E3EB] bg-white px-3.5 py-1.5 font-mono text-sm tabular-nums dark:border-[#1E222D] dark:bg-[#0D1017]">
-            <span className="text-[#787B86]">Quote: </span>
-            <span className="font-semibold text-[#131722] dark:text-[#F0F3FA]">
-              {latestTick ? latestTick.quote.toFixed(marketMeta.pip) : '—'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Split: Scanner Left, Runner Right */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* Live Digit Distribution Scanner */}
-        <section className="rounded-lg border border-[#E0E3EB] bg-white p-5 lg:col-span-7 dark:border-[#1E222D] dark:bg-[#0D1017]">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-display text-base font-semibold text-[#131722] dark:text-[#F0F3FA]">
-                Last 100 Ticks Digit Distribution
-              </h2>
-              <p className="font-mono text-xs text-[#787B86]">
-                Even {evenPct}% · Odd {100 - evenPct}% · Sample {ticks.length} ticks
-              </p>
-            </div>
-            {latestTick && (
-              <div className="font-mono text-xs text-[#787B86]">
-                Last digit:{' '}
-                <strong className="text-base text-[#089981]">{latestTick.lastDigit}</strong>
-              </div>
-            )}
-          </div>
-
-          {/* 10 Digit Bars */}
-          <div className="mt-5 grid grid-cols-5 gap-2.5 sm:grid-cols-10">
-            {digitStats.map((d) => {
-              const isLatest = latestTick?.lastDigit === d.digit;
-              const isHot = d.pct >= 14;
-              const isCold = d.pct <= 6;
-              return (
-                <div
-                  key={d.digit}
-                  className={`flex flex-col items-center rounded border p-2.5 transition-colors ${
-                    isLatest
-                      ? 'border-[#2962FF] bg-[#2962FF]/10'
-                      : 'border-[#E0E3EB] bg-[#F8FAFD] dark:border-[#1E222D] dark:bg-black'
-                  }`}
-                >
-                  <span className="font-mono text-sm font-bold text-[#131722] dark:text-[#F0F3FA]">
-                    {d.digit}
-                  </span>
-                  <div className="my-2 flex h-16 w-2 items-end overflow-hidden rounded-full bg-[#E0E3EB] dark:bg-[#1E222D]">
-                    <div
-                      className={`w-full transition-all duration-200 ${
-                        isHot
-                          ? 'bg-[#089981]'
-                          : isCold
-                            ? 'bg-[#F23645]'
-                            : 'bg-[#787B86]'
-                      }`}
-                      style={{ height: `${Math.min(100, d.pct * 4)}%` }}
-                    />
-                  </div>
-                  <span className="font-mono text-xs tabular-nums text-[#5D606B] dark:text-[#9598A1]">
-                    {d.pct}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Recent Digit Tape */}
-          <div className="mt-5 border-t border-[#E0E3EB] pt-4 dark:border-[#1E222D]">
-            <p className="mb-2 text-xs font-medium text-[#787B86]">
-              Recent Tick Stream (Newest Right)
-            </p>
-            <div className="flex flex-wrap gap-1.5 font-mono text-xs">
-              {ticks.slice(-24).map((t, idx) => (
-                <span
-                  key={`${t.epoch}-${idx}`}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded border tabular-nums ${
-                    t.lastDigit % 2 === 0
-                      ? 'border-[#089981]/40 bg-[#089981]/10 text-[#089981]'
-                      : 'border-[#E0E3EB] bg-[#F8FAFD] text-[#5D606B] dark:border-[#1E222D] dark:bg-black dark:text-[#9598A1]'
-                  }`}
-                >
-                  {t.lastDigit}
-                </span>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Bot Configuration & Runner */}
-        <section className="space-y-4 rounded-lg border border-[#E0E3EB] bg-white p-5 lg:col-span-5 dark:border-[#1E222D] dark:bg-[#0D1017]">
-          <div>
-            <label htmlFor="bot-select" className="block text-xs font-medium text-[#787B86]">
-              Selected Automated Strategy
-            </label>
-            <select
-              id="bot-select"
-              value={selectedBot.id}
-              onChange={(e) => onSelectBotId(e.target.value)}
-              className="mt-1.5 h-9 w-full rounded border border-[#E0E3EB] bg-white px-3 text-sm font-medium text-[#131722] focus:border-[#2962FF] focus:outline-none dark:border-[#2A2E39] dark:bg-black dark:text-[#F0F3FA]"
-            >
-              {automatedBots.map((bot) => (
-                <option key={bot.id} value={bot.id}>
-                  {bot.name} {bot.builtin || isAdmin || licenses.includes(bot.id) ? '(Unlocked)' : '(Locked)'}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Deriv Token Input */}
-          <div className="space-y-2 border-t border-[#E0E3EB] pt-4 dark:border-[#1E222D]">
-            <label htmlFor="deriv-token" className="block text-xs font-medium text-[#787B86]">
-              Deriv API Token (Demo recommended first)
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="deriv-token"
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Paste Deriv Read + Trade token"
-                className="h-9 min-w-0 flex-1 rounded border border-[#E0E3EB] bg-white px-3 font-mono text-xs text-[#131722] focus:border-[#2962FF] focus:outline-none dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-              />
-              <button
-                type="button"
-                disabled={verifying}
-                onClick={handleVerifyToken}
-                className="h-9 rounded border border-[#E0E3EB] bg-[#F8FAFD] px-3.5 text-xs font-medium text-[#131722] hover:border-[#2962FF] disabled:opacity-60 dark:border-[#2A2E39] dark:bg-[#131722] dark:text-[#D1D4DC] whitespace-nowrap shrink-0"
-              >
-                {verifying ? 'Checking...' : 'Connect'}
-              </button>
-            </div>
-            {accountInfo && (
-              <p className="flex items-center gap-1.5 font-mono text-xs tabular-nums text-[#089981]">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                {accountInfo.isVirtual ? 'Demo' : 'Real'} ({accountInfo.loginid}) · {accountInfo.balance.toFixed(2)} {accountInfo.currency}
-              </p>
-            )}
-            {tokenError && <p className="text-xs text-[#F23645]">{tokenError}</p>}
-          </div>
-
-          {/* Contract & Risk Controls */}
-          <div className="grid grid-cols-2 gap-3 border-t border-[#E0E3EB] pt-4 dark:border-[#1E222D]">
-            <div>
-              <label htmlFor="contract-type" className="block text-xs font-medium text-[#787B86]">
-                Contract Type
-              </label>
-              <select
-                id="contract-type"
-                value={contractType}
-                onChange={(e) => setContractType(e.target.value as any)}
-                className="mt-1 h-9 w-full rounded border border-[#E0E3EB] bg-white px-2.5 text-xs font-medium text-[#131722] dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-              >
-                <option value="DIGITOVER">Digit Over</option>
-                <option value="DIGITUNDER">Digit Under</option>
-                <option value="DIGITEVEN">Digit Even</option>
-                <option value="DIGITODD">Digit Odd</option>
-                <option value="DIGITDIFF">Digit Differs</option>
-                <option value="DIGITMATCH">Digit Matches</option>
-                <option value="CALL">Rise (Call)</option>
-                <option value="PUT">Fall (Put)</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="digit-barrier" className="block text-xs font-medium text-[#787B86]">
-                Digit Barrier (0-9)
-              </label>
-              <input
-                id="digit-barrier"
-                type="number"
-                min={0}
-                max={9}
-                value={barrier}
-                onChange={(e) => setBarrier(e.target.value)}
-                disabled={!['DIGITOVER', 'DIGITUNDER', 'DIGITDIFF', 'DIGITMATCH'].includes(contractType)}
-                className="mt-1 h-9 w-full rounded border border-[#E0E3EB] bg-white px-3 font-mono text-sm text-[#131722] disabled:opacity-50 dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="stake-amt" className="block text-xs font-medium text-[#787B86]">
-                Stake (USD)
-              </label>
-              <input
-                id="stake-amt"
-                type="number"
-                min={0.35}
-                step={0.5}
-                value={stake}
-                onChange={(e) => setStake(e.target.value)}
-                className="mt-1 h-9 w-full rounded border border-[#E0E3EB] bg-white px-3 font-mono text-sm text-[#131722] dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label htmlFor="tp-amt" className="block text-xs font-medium text-[#787B86]">
-                  TP ($)
-                </label>
-                <input
-                  id="tp-amt"
-                  type="number"
-                  min={1}
-                  value={takeProfit}
-                  onChange={(e) => setTakeProfit(e.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-[#E0E3EB] bg-white px-2.5 font-mono text-sm text-[#131722] dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-                />
-              </div>
-              <div>
-                <label htmlFor="sl-amt" className="block text-xs font-medium text-[#787B86]">
-                  SL ($)
-                </label>
-                <input
-                  id="sl-amt"
-                  type="number"
-                  min={1}
-                  value={stopLoss}
-                  onChange={(e) => setStopLoss(e.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-[#E0E3EB] bg-white px-2.5 font-mono text-sm text-[#131722] dark:border-[#2A2E39] dark:bg-black dark:text-[#D1D4DC]"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded border border-[#E0E3EB] bg-[#F8FAFD] px-3.5 py-2 text-xs dark:border-[#1E222D] dark:bg-black">
-            <span className="text-[#787B86]">Session P&L</span>
-            <span
-              className={`font-mono text-sm font-semibold tabular-nums ${
-                sessionPnl > 0
-                  ? 'text-[#089981]'
-                  : sessionPnl < 0
-                    ? 'text-[#F23645]'
-                    : 'text-[#131722] dark:text-[#F0F3FA]'
-              }`}
-            >
-              {sessionPnl >= 0 ? '+' : ''}${sessionPnl.toFixed(2)}
-            </span>
-          </div>
-
+        {running && (
           <button
             type="button"
-            onClick={toggleRun}
-            className={`inline-flex h-10 w-full items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold transition-colors ${
-              !isBotUnlocked
-                ? 'bg-[#2962FF] text-white hover:bg-[#1E53E5]'
-                : running
-                  ? 'bg-[#F23645] text-white hover:bg-[#D92B3A]'
-                  : 'bg-[#089981] text-white hover:bg-[#06806B]'
-            }`}
+            onClick={() => void stopBot()}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#F23645] hover:bg-[#D92D3C] text-white text-sm font-bold shadow-lg shrink-0"
           >
-            {!isBotUnlocked ? (
-              'Unlock Strategy to Run'
-            ) : running ? (
-              <>
-                <Square className="h-4 w-4" />
-                Stop Bot
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" />
-                Start Automated Bot
-              </>
-            )}
+            <Square className="w-4 h-4 fill-current" />
+            STOP TRADING NOW
           </button>
-
-          <p className="text-xs text-[#787B86]">{runStatus}</p>
-        </section>
+        )}
       </div>
 
-      {/* Execution History Table */}
-      <section className="rounded-lg border border-[#E0E3EB] bg-white p-5 dark:border-[#1E222D] dark:bg-[#0D1017]">
-        <div className="flex items-center justify-between gap-4 border-b border-[#E0E3EB] pb-3.5 dark:border-[#1E222D]">
-          <div>
-            <h2 className="font-display text-base font-semibold text-[#131722] dark:text-[#F0F3FA]">
-              Recent Bot Trade Logs
-            </h2>
-            <p className="text-xs text-[#787B86]">
-              Synced to your Firebase account whenever a contract settles.
-            </p>
+      {err && (
+        <div className="p-3.5 rounded-xl bg-[#F23645]/10 border border-[#F23645]/30 text-xs text-[#F23645] flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{err}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left Setup Column */}
+        <div className="lg:col-span-5 space-y-4">
+          {/* Deriv Connection Box */}
+          <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+                <KeyRound className="w-4 h-4 text-[#2962FF]" />
+                1. Connect Deriv Account
+              </div>
+              <a
+                href={oauthHref}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2962FF] hover:underline"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Connect via Deriv OAuth
+              </a>
+            </div>
+
+            <input
+              type="password"
+              value={derivToken}
+              disabled={running}
+              onChange={(e) => onSetDerivToken(e.target.value)}
+              placeholder="Paste Deriv API token (Read + Trade scopes)"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-[#1E222D] bg-slate-50 dark:bg-black text-xs text-slate-900 dark:text-white font-mono"
+            />
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex rounded-lg border border-slate-200 dark:border-[#1E222D] p-0.5 bg-slate-50 dark:bg-black">
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => setAccountPref('demo')}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold ${
+                    accountPref === 'demo' ? 'bg-[#089981] text-white' : 'text-slate-500 dark:text-[#787B86]'
+                  }`}
+                >
+                  Demo First
+                </button>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => setAccountPref('real')}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold ${
+                    accountPref === 'real' ? 'bg-amber-500 text-black' : 'text-slate-500 dark:text-[#787B86]'
+                  }`}
+                >
+                  Real Account
+                </button>
+              </div>
+
+              {derivAccount && (
+                <div className="inline-flex items-center gap-1.5 text-xs font-mono tabular-nums text-slate-900 dark:text-white">
+                  <Wallet className="w-3.5 h-3.5 text-[#2962FF]" />
+                  <span>{derivAccount.loginid}</span>
+                  <span className="font-bold">
+                    {derivAccount.balance.toFixed(2)} {derivAccount.currency}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-          {tradeLogs.length > 0 && (
-            <span className="font-mono text-xs text-[#787B86]">
-              {tradeLogs.length} entries
-            </span>
-          )}
+
+          {/* Bot + Risk Settings */}
+          <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+              <Bot className="w-4 h-4 text-[#2962FF]" />
+              2. Pick Strategy &amp; Risk Limits
+            </div>
+
+            <select
+              value={activeId}
+              disabled={running}
+              onChange={(e) => onSelectBot(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-[#1E222D] bg-slate-50 dark:bg-black text-xs font-semibold text-slate-900 dark:text-white"
+            >
+              {autoBots.map((b) => {
+                const isOwn = b.id === 'engine-ai' || !b.locked || user?.isAdmin || licenses.has(b.id);
+                return (
+                  <option key={b.id} value={b.id}>
+                    {b.name} {isOwn ? '(Unlocked)' : '(Locked)'}
+                  </option>
+                );
+              })}
+            </select>
+
+            {activeBot && (
+              <p className="text-[11px] text-slate-500 dark:text-[#787B86] leading-relaxed">{activeBot.desc}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-[11px] text-slate-500 dark:text-[#787B86] mb-1">Stake ($)</label>
+                <input
+                  type="number"
+                  min={0.35}
+                  step={0.05}
+                  disabled={running}
+                  value={stake}
+                  onChange={(e) => setStake(Number(e.target.value))}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-[#1E222D] bg-slate-50 dark:bg-black text-xs font-mono text-slate-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 dark:text-[#787B86] mb-1">Stop Loss ($)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  disabled={running}
+                  value={stopLoss}
+                  onChange={(e) => setStopLoss(Number(e.target.value))}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-[#1E222D] bg-slate-50 dark:bg-black text-xs font-mono text-slate-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 dark:text-[#787B86] mb-1">Take Profit ($)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  disabled={running}
+                  value={takeProfit}
+                  onChange={(e) => setTakeProfit(Number(e.target.value))}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-[#1E222D] bg-slate-50 dark:bg-black text-xs font-mono text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            {!running ? (
+              unlocked ? (
+                <button
+                  type="button"
+                  disabled={starting}
+                  onClick={() => void launchBot(false)}
+                  className="w-full py-2.5 rounded-xl bg-[#2962FF] hover:bg-[#1E53E5] disabled:opacity-60 text-white text-sm font-bold flex items-center justify-center gap-2"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  {starting ? 'Starting Bot...' : 'Start Automated Trading'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => activeBot && onBuy(activeBot)}
+                  className="w-full py-2.5 rounded-xl bg-[#2962FF] hover:bg-[#1E53E5] text-white text-sm font-bold"
+                >
+                  Unlock {activeBot?.name}
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={() => void stopBot()}
+                className="w-full py-2.5 rounded-xl bg-[#F23645] hover:bg-[#D92D3C] text-white text-sm font-bold flex items-center justify-center gap-2"
+              >
+                <Square className="w-4 h-4 fill-current" />
+                Stop Trading
+              </button>
+            )}
+          </div>
+
+          {/* Local XML / Rules Inspector */}
+          <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4 space-y-2">
+            <label className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-[#D1D4DC] cursor-pointer">
+              <span className="inline-flex items-center gap-1.5">
+                <FileCode2 className="w-4 h-4 text-[#2962FF]" />
+                Inspect local Deriv .xml / Rules .json
+              </span>
+              <input
+                type="file"
+                accept=".xml,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void inspectXmlFile(f);
+                }}
+              />
+              <span className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-[#1E222D] text-[11px] text-[#2962FF]">
+                Choose File
+              </span>
+            </label>
+            {xmlPreview && <p className="text-[11px] text-slate-500 dark:text-[#787B86] leading-relaxed">{xmlPreview}</p>}
+          </div>
         </div>
 
-        {tradeLogs.length === 0 ? (
-          <div className="py-8 text-center text-sm text-[#787B86]">
-            No trades logged yet. Connect a Deriv Demo token and run a contract above to see live execution history.
+        {/* Right Live AI Core HUD */}
+        <div className="lg:col-span-7 space-y-4">
+          {/* Session Stats Strip */}
+          <div className="grid grid-cols-4 gap-2.5">
+            <div className="rounded-xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-3">
+              <div className="text-[11px] text-slate-500 dark:text-[#787B86]">Session P&amp;L</div>
+              <div
+                className={`font-mono text-base font-bold tabular-nums mt-0.5 ${
+                  sessionState.pnl >= 0 ? 'text-[#089981]' : 'text-[#F23645]'
+                }`}
+              >
+                {sessionState.pnl >= 0 ? '+' : ''}
+                {sessionState.pnl.toFixed(2)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-3">
+              <div className="text-[11px] text-slate-500 dark:text-[#787B86]">Wins / Losses</div>
+              <div className="font-mono text-base font-bold tabular-nums mt-0.5 text-slate-900 dark:text-white">
+                <span className="text-[#089981]">{sessionState.wins}</span> /{' '}
+                <span className="text-[#F23645]">{sessionState.losses}</span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-3">
+              <div className="text-[11px] text-slate-500 dark:text-[#787B86]">Trades</div>
+              <div className="font-mono text-base font-bold tabular-nums mt-0.5 text-slate-900 dark:text-white">
+                {sessionState.trades}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-3">
+              <div className="text-[11px] text-slate-500 dark:text-[#787B86]">Live Contract</div>
+              <div
+                className={`font-mono text-base font-bold tabular-nums mt-0.5 ${
+                  aiLiveProfit === null ? 'text-slate-400' : aiLiveProfit >= 0 ? 'text-[#089981]' : 'text-[#F23645]'
+                }`}
+              >
+                {aiLiveProfit === null ? 'Idle' : `${aiLiveProfit >= 0 ? '+' : ''}${aiLiveProfit.toFixed(2)}`}
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-[#E0E3EB] text-xs font-medium text-[#787B86] dark:border-[#1E222D]">
-                  <th className="py-2 pr-4">Strategy</th>
-                  <th className="py-2 pr-4">Market</th>
-                  <th className="py-2 pr-4">Contract</th>
-                  <th className="py-2 pr-4">Mode</th>
-                  <th className="py-2 pr-4 text-right">Stake</th>
-                  <th className="py-2 text-right">Profit / Loss</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#E0E3EB] font-mono text-xs tabular-nums dark:divide-[#1E222D]">
-                {tradeLogs.slice(0, 15).map((log) => (
-                  <tr key={log.id} className="hover:bg-[#F8FAFD] dark:hover:bg-black/60">
-                    <td className="py-2.5 pr-4 font-sans font-medium text-[#131722] dark:text-[#F0F3FA]">
-                      {log.botName}
-                    </td>
-                    <td className="py-2.5 pr-4 text-[#787B86]">{log.market}</td>
-                    <td className="py-2.5 pr-4 text-[#787B86]">{log.contract}</td>
-                    <td className="py-2.5 pr-4 uppercase text-[#787B86]">{log.accountType}</td>
-                    <td className="py-2.5 pr-4 text-right text-[#131722] dark:text-[#D1D4DC]">
-                      ${log.stake.toFixed(2)}
-                    </td>
-                    <td
-                      className={`py-2.5 text-right font-semibold ${
-                        log.profit >= 0 ? 'text-[#089981]' : 'text-[#F23645]'
-                      }`}
-                    >
-                      {log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}
-                    </td>
-                  </tr>
+
+          {/* Live Market Scanner Matrix */}
+          <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-900 dark:text-white">AI Core Live Read</span>
+              <span className="text-[11px] text-[#2962FF] font-medium truncate">{aiHeadline}</span>
+            </div>
+
+            {aiRows.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400 dark:text-[#787B86]">
+                Press Start to stream live ticks across all 10 Volatility indices.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {aiRows.map((r) => (
+                  <div
+                    key={r.symbol}
+                    className="rounded-xl border border-slate-100 dark:border-[#1E222D] bg-slate-50 dark:bg-black px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-900 dark:text-white truncate">{LIB.marketName(r.symbol)}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-[#787B86] truncate">
+                        {r.label || `${r.ticks} ticks`}
+                      </div>
+                    </div>
+                    <div className="w-16 h-1.5 rounded-full bg-slate-200 dark:bg-[#1E222D] overflow-hidden shrink-0">
+                      <div
+                        className="h-full bg-[#2962FF] transition-all"
+                        style={{ width: `${Math.round(Math.min(1, r.score) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
-        )}
-      </section>
+
+          {/* Recent Trades & Live Activity */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4">
+              <div className="text-xs font-bold text-slate-900 dark:text-white mb-2">Recent Trades</div>
+              {recentTrades.length === 0 ? (
+                <div className="text-xs text-slate-400 dark:text-[#787B86] py-4">No settled trades in this run yet.</div>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {recentTrades.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-[#1E222D]/60">
+                      <span className="font-medium text-slate-800 dark:text-[#D1D4DC]">{LIB.marketName(t.symbol)}</span>
+                      <span className={`font-mono font-bold tabular-nums ${t.won ? 'text-[#089981]' : 'text-[#F23645]'}`}>
+                        {t.profit >= 0 ? '+' : ''}
+                        {t.profit.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 dark:border-[#1E222D] bg-white dark:bg-[#0D1017] p-4">
+              <div className="text-xs font-bold text-slate-900 dark:text-white mb-2">Execution Log</div>
+              <div className="space-y-1 max-h-48 overflow-y-auto font-mono text-[11px]">
+                {logs.length === 0 ? (
+                  <div className="text-slate-400 dark:text-[#787B86]">Waiting for start...</div>
+                ) : (
+                  logs.map((l) => (
+                    <div
+                      key={l.id}
+                      className={
+                        l.level === 'error'
+                          ? 'text-[#F23645]'
+                          : l.level === 'warn'
+                          ? 'text-amber-500'
+                          : l.level === 'ok'
+                          ? 'text-[#089981]'
+                          : 'text-slate-600 dark:text-[#B2B5BE]'
+                      }
+                    >
+                      <span className="opacity-50 mr-1.5">{l.time}</span>
+                      {l.msg}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Real Account Safety Modal */}
+      {showRealConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75">
+          <div className="w-full max-w-sm rounded-2xl border border-amber-500/40 bg-white dark:bg-[#0D1017] p-5 space-y-4">
+            <div className="flex items-center gap-2 text-amber-500 font-bold text-sm">
+              <ShieldAlert className="w-5 h-5" />
+              Real Account Confirmation
+            </div>
+            <p className="text-xs text-slate-600 dark:text-[#B2B5BE]">
+              You selected <strong>Real Money</strong> instead of Demo. Losses are real and final. Make sure your Stop Loss (${stopLoss}) is set to an amount you are comfortable risking.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountPref('demo');
+                  setShowRealConfirm(false);
+                }}
+                className="py-2 rounded-xl bg-[#089981] text-white text-xs font-semibold"
+              >
+                Switch to Demo
+              </button>
+              <button
+                type="button"
+                onClick={() => void launchBot(true)}
+                className="py-2 rounded-xl border border-amber-500 text-amber-600 dark:text-amber-400 text-xs font-semibold"
+              >
+                Continue Real
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

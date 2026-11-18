@@ -2,302 +2,195 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Registered user profile, theme preference, country, and unlocked bot/signal entitlements.",
+      "description": "Registered account keyed by normalised email (one person = one account per normalised email).",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "description": "Firebase Auth UID",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "displayName": {
-          "type": "string",
-          "description": "User display name",
-          "minLength": 1,
-          "maxLength": 80
-        },
-        "email": {
-          "type": "string",
-          "format": "email",
-          "description": "User email address",
-          "maxLength": 160
-        },
-        "country": {
-          "type": "string",
-          "description": "ISO 2-letter country code (e.g. KE, US, GB)",
-          "minLength": 2,
-          "maxLength": 8
-        },
-        "theme": {
-          "type": "string",
-          "enum": ["light", "dark"],
-          "description": "Preferred UI color theme"
-        },
-        "licenses": {
-          "type": "array",
-          "description": "List of unlocked product IDs (max 50)"
-        },
-        "signalSubEnd": {
-          "type": "number",
-          "description": "Epoch timestamp in milliseconds when forex signals subscription expires"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Account creation timestamp"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Last profile update timestamp"
-        }
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "emailKey": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "verified": { "type": "boolean" },
+        "blocked": { "type": "boolean" },
+        "country": { "type": "string", "minLength": 2, "maxLength": 8 },
+        "theme": { "type": "string", "enum": ["system", "light", "dark"] },
+        "adminNote": { "type": "string", "maxLength": 500 },
+        "lastLoginAt": { "type": "number" },
+        "created": { "type": "number" }
       },
-      "required": ["uid", "displayName", "email", "country", "theme", "licenses", "signalSubEnd", "createdAt", "updatedAt"]
+      "required": ["uid", "emailKey", "email", "name", "verified", "created"]
+    },
+    "Account": {
+      "title": "Account",
+      "description": "Subscription expiry, free forex signal state machine, AI scanner credits, and token revocation timestamp.",
+      "type": "object",
+      "properties": {
+        "created": { "type": "number" },
+        "subEnd": { "type": "number" },
+        "aiFree": { "type": "boolean" },
+        "aiLeft": { "type": "number" },
+        "aiSigs": { "type": "array" },
+        "revokedAt": { "type": "number" },
+        "free": { "type": "object" }
+      },
+      "required": ["created", "subEnd", "free"]
+    },
+    "License": {
+      "title": "License",
+      "description": "Map of botId -> entitlement metadata for a normalised email account.",
+      "type": "object",
+      "properties": {
+        "items": { "type": "object" }
+      }
     },
     "Order": {
       "title": "Order",
-      "description": "Payment order for M-Pesa STK Push, M-Pesa Pochi, or PayPal checkout.",
+      "description": "Reversed-time keyed payment order supporting M-Pesa STK Push, Pochi la Biashara, PayPal, Paystack, and USDT.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "userEmail": {
-          "type": "string",
-          "format": "email",
-          "maxLength": 160
-        },
-        "itemId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "itemName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 120
-        },
-        "method": {
-          "type": "string",
-          "enum": ["mpesa_stk", "mpesa_pochi", "paypal"]
-        },
-        "status": {
-          "type": "string",
-          "enum": ["pending", "paid", "failed", "cancelled"]
-        },
-        "amountKsh": {
-          "type": "number"
-        },
-        "amountUsd": {
-          "type": "number"
-        },
-        "phone": {
-          "type": "string",
-          "maxLength": 24
-        },
-        "reference": {
-          "type": "string",
-          "maxLength": 128
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "ref": { "type": "string", "maxLength": 80 },
+        "t": { "type": "number" },
+        "botId": { "type": "string", "maxLength": 64 },
+        "price": { "type": "number" },
+        "usd": { "type": "number" },
+        "method": { "type": "string", "enum": ["pochi", "daraja", "paystack", "paypal", "usdt"] },
+        "account": { "type": "string", "maxLength": 160 },
+        "email": { "type": "string", "maxLength": 160 },
+        "name": { "type": "string", "maxLength": 80 },
+        "whatsapp": { "type": "string", "maxLength": 24 },
+        "mpesa": { "type": "string", "maxLength": 700 },
+        "proof": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "rejectReason": { "type": "string", "maxLength": 300 },
+        "refundNote": { "type": "string", "maxLength": 300 }
       },
-      "required": ["userId", "userEmail", "itemId", "itemName", "method", "status", "amountKsh", "amountUsd", "phone", "reference", "createdAt", "updatedAt"]
+      "required": ["ref", "t", "botId", "price", "method", "account", "status"]
+    },
+    "OrderRef": {
+      "title": "OrderRef",
+      "description": "Duplicate guard and reverse lookup for payment codes and order references.",
+      "type": "object",
+      "properties": {
+        "orderKey": { "type": "string" },
+        "ref": { "type": "string" },
+        "createdAt": { "type": "number" }
+      }
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Platform configuration, dynamic prices, custom/edited/hidden catalog bots, and maintenance mode.",
+      "type": "object",
+      "properties": {
+        "pochi": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "payMode": { "type": "string" },
+        "paypal": { "type": "string" },
+        "usdtAddress": { "type": "string" },
+        "usdtNetwork": { "type": "string" },
+        "usdRate": { "type": "number" },
+        "autoApprove": { "type": "boolean" },
+        "showUsdForeign": { "type": "boolean" },
+        "maintenance": { "type": "boolean" },
+        "revokeAll": { "type": "number" }
+      }
+    },
+    "BotEntry": {
+      "title": "BotEntry",
+      "description": "Admin-added encrypted bot vault payload (max ~900KB in Firestore).",
+      "type": "object",
+      "properties": {
+        "file": { "type": "string" },
+        "mime": { "type": "string" },
+        "box": { "type": "object" },
+        "ownerWrap": { "type": "object" }
+      }
+    },
+    "EaKey": {
+      "title": "EaKey",
+      "description": "MT5 Expert Advisor key, remote settings, login lock, and live synced telemetry.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "bot": { "type": "string" },
+        "key": { "type": "string" },
+        "cfg": { "type": "object" },
+        "status": { "type": "object" },
+        "logins": { "type": "array" },
+        "lockLogin": { "type": "string" },
+        "owner": { "type": "boolean" },
+        "licOk": { "type": "boolean" },
+        "licT": { "type": "number" }
+      }
     },
     "Signal": {
       "title": "Signal",
-      "description": "SMC/ICT Forex or Volatility trade signal published by TRADERSPRO254.",
+      "description": "Cached SMC/ICT Forex signals and admin manual signals.",
       "type": "object",
       "properties": {
-        "pair": {
-          "type": "string",
-          "minLength": 2,
-          "maxLength": 24
-        },
-        "direction": {
-          "type": "string",
-          "enum": ["BUY", "SELL"]
-        },
-        "entry": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 24
-        },
-        "stopLoss": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 24
-        },
-        "takeProfit": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 24
-        },
-        "timeframe": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 12
-        },
-        "strategy": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "status": {
-          "type": "string",
-          "enum": ["active", "tp_hit", "sl_hit", "closed"]
-        },
-        "published": {
-          "type": "boolean"
-        },
-        "notes": {
-          "type": "string",
-          "maxLength": 400
-        },
-        "authorId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": ["pair", "direction", "entry", "stopLoss", "takeProfit", "timeframe", "strategy", "status", "published", "notes", "authorId", "createdAt", "updatedAt"]
+        "t": { "type": "number" },
+        "closed": { "type": "boolean" },
+        "signals": { "type": "array" }
+      }
     },
-    "Mt5Config": {
-      "title": "Mt5Config",
-      "description": "Remote control configuration for MT5 Expert Advisors.",
+    "EngineState": {
+      "title": "EngineState",
+      "description": "Market Engine configuration, heartbeat, tracked signals, hourly macro brief, and tick lease.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "eaId": {
-          "type": "string",
-          "enum": ["xauusd-system", "straddle-system"]
-        },
-        "eaKey": {
-          "type": "string",
-          "minLength": 4,
-          "maxLength": 64
-        },
-        "symbol": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 16
-        },
-        "mode": {
-          "type": "string",
-          "enum": ["intraday", "scalping"]
-        },
-        "lotSize": {
-          "type": "number"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": ["userId", "eaId", "eaKey", "symbol", "mode", "lotSize", "enabled", "createdAt", "updatedAt"]
+        "on": { "type": "boolean" },
+        "t": { "type": "number" }
+      }
     },
-    "TradeLog": {
-      "title": "TradeLog",
-      "description": "Executed Deriv bot contract history entry.",
+    "NewsAi": {
+      "title": "NewsAi",
+      "description": "Cached 6-hour AI explanation for high/medium impact economic calendar events.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "botId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "botName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
-        },
-        "market": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "contract": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "stake": {
-          "type": "number"
-        },
-        "profit": {
-          "type": "number"
-        },
-        "accountType": {
-          "type": "string",
-          "enum": ["demo", "real"]
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": ["userId", "botId", "botName", "market", "contract", "stake", "profit", "accountType", "createdAt"]
+        "id": { "type": "string" },
+        "summary": { "type": "string" },
+        "made": { "type": "number" }
+      }
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable admin action audit trail.",
+      "type": "object",
+      "properties": {
+        "t": { "type": "number" },
+        "who": { "type": "string" },
+        "action": { "type": "string" },
+        "target": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Site-wide announcement banner shown to users.",
+      "type": "object",
+      "properties": {
+        "message": { "type": "string" },
+        "kind": { "type": "string", "enum": ["info", "warning"] },
+        "startAt": { "type": "number" },
+        "endAt": { "type": "number" },
+        "active": { "type": "boolean" }
+      }
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": { "$ref": "#/entities/User" },
-      "description": "User profile, UI theme, country preference, and purchased product licenses."
-    },
-    "/orders/{orderId}": {
-      "schema": { "$ref": "#/entities/Order" },
-      "description": "M-Pesa and PayPal payment orders."
-    },
-    "/signals/{signalId}": {
-      "schema": { "$ref": "#/entities/Signal" },
-      "description": "Live SMC/ICT Forex trade signals."
-    },
-    "/mt5Configs/{configId}": {
-      "schema": { "$ref": "#/entities/Mt5Config" },
-      "description": "Remote MT5 Expert Advisor settings per user."
-    },
-    "/tradeLogs/{logId}": {
-      "schema": { "$ref": "#/entities/TradeLog" },
-      "description": "Deriv bot execution logs per user."
-    }
+    "/users/{emailKey}": { "schema": { "$ref": "#/entities/User" }, "description": "Normalised-email user profile registry" },
+    "/accounts/{emailKey}": { "schema": { "$ref": "#/entities/Account" }, "description": "Signals subscription, free-trial state, AI credits" },
+    "/licenses/{emailKey}": { "schema": { "$ref": "#/entities/License" }, "description": "Purchased bot entitlements per account" },
+    "/orders/{orderKey}": { "schema": { "$ref": "#/entities/Order" }, "description": "Newest-first order records" },
+    "/orderRefs/{refId}": { "schema": { "$ref": "#/entities/OrderRef" }, "description": "Idempotency & duplicate code guards" },
+    "/orderStatus/{orderRef}": { "schema": { "$ref": "#/entities/OrderRef" }, "description": "Safe read-only payment confirmation mirror" },
+    "/settings/{docId}": { "schema": { "$ref": "#/entities/Settings" }, "description": "Site config, prices, catalog edits, and broker links" },
+    "/botentry/{botId}": { "schema": { "$ref": "#/entities/BotEntry" }, "description": "Admin-uploaded encrypted bot entries" },
+    "/eakeys/{key}": { "schema": { "$ref": "#/entities/EaKey" }, "description": "MT5 EA remote control state and telemetry" },
+    "/signals/{docId}": { "schema": { "$ref": "#/entities/Signal" }, "description": "Cached SMC/ICT scan and manual signals" },
+    "/ai/{docId}": { "schema": { "$ref": "#/entities/Signal" }, "description": "AI top-down market scanner cache" },
+    "/engine/{docId}": { "schema": { "$ref": "#/entities/EngineState" }, "description": "Market Engine config, heartbeat, signals, brief, lease" },
+    "/newsai/{eventId}": { "schema": { "$ref": "#/entities/NewsAi" }, "description": "6h cached AI analysis per economic event" },
+    "/audit/{entryId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Admin audit trail" },
+    "/announcements/{annId}": { "schema": { "$ref": "#/entities/Announcement" }, "description": "Active user announcements" },
+    "/admins/{uid}": { "schema": { "$ref": "#/entities/User" }, "description": "Verified admin UIDs" }
   }
 }

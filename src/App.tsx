@@ -1,539 +1,419 @@
-import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
-import {
-  collection,
-  doc,
-  getDoc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
 import { useCallback, useEffect, useState } from 'react';
-import { AutomatedView } from './components/AutomatedView.tsx';
-import { CatalogView } from './components/CatalogView.tsx';
-import { ChartsView } from './components/ChartsView.tsx';
-import { CheckoutModal } from './components/CheckoutModal.tsx';
-import { ForexMt5View } from './components/ForexMt5View.tsx';
-import { Navbar } from './components/Navbar.tsx';
-import { SettingsView } from './components/SettingsView.tsx';
-import { ADMIN_EMAIL, DEFAULT_USD_KSH_RATE, type CatalogItem } from './data/catalog.ts';
-import {
-  auth,
-  db,
-  handleFirestoreError,
-  OperationType,
-  signInWithGoogle,
-  signOutUser,
-  testFirestoreConnection,
-} from './lib/firebase.ts';
+import { onAuthStateChanged } from 'firebase/auth';
+import { AdminView } from './components/AdminView';
+import { AuthModal } from './components/AuthModal';
+import { AutomatedView } from './components/AutomatedView';
+import { CatalogView } from './components/CatalogView';
+import { ChartsView } from './components/ChartsView';
+import { CheckoutModal } from './components/CheckoutModal';
+import { ForexMt5View } from './components/ForexMt5View';
+import { HomeView } from './components/HomeView';
+import { Navbar } from './components/Navbar';
+import { SettingsView } from './components/SettingsView';
+import { ToolsView } from './components/ToolsView';
+import { VerifyBanner } from './components/VerifyBanner';
+import { mergeCatalog, SPECIAL_PRODUCTS } from './data/catalog';
+import { apiFetch } from './lib/api';
+import { auth, testFirestoreConnection } from './lib/firebase';
+import { initPwaServiceWorker, OfflineIndicator } from './lib/pwa';
 import type {
-  ActiveTab,
-  GeoInfo,
-  Mt5ConfigRecord,
-  OrderRecord,
-  SignalRecord,
-  TradeLogRecord,
-} from './types/app.ts';
+  ActiveRoute,
+  Announcement,
+  CatalogItem,
+  DerivAccountInfo,
+  ServerConfig,
+  ThemeMode,
+  TradeLogEntry,
+  UserProfile,
+} from './types/app';
 
-const DEFAULT_GEO: GeoInfo = {
-  country: 'KE',
-  isKenya: true,
-  currency: { code: 'KSh', rateFromUsd: DEFAULT_USD_KSH_RATE },
-  mpesaConfigured: false,
-  paypalConfigured: false,
-  pochiNumber: import.meta.env.VITE_POCHI_NUMBER || '0758414027',
-  whatsappNumber: import.meta.env.VITE_WHATSAPP_NUMBER || '254758414027',
-  usdKshRate: DEFAULT_USD_KSH_RATE,
-};
+const VALID_ROUTES: ActiveRoute[] = [
+  'home',
+  'catalog',
+  'automated',
+  'scanner',
+  'charts',
+  'markets',
+  'trades',
+  'po',
+  'news',
+  'forex',
+  'aiscan',
+  'engine',
+  'broker',
+  'settings',
+  'admin',
+];
 
-function getInitialTheme(): 'light' | 'dark' {
+function initialRoute(): ActiveRoute {
+  if (typeof window === 'undefined') return 'home';
+  if (window.location.pathname === '/admin') return 'admin';
+  const hash = window.location.hash.replace(/^#/, '') as ActiveRoute;
+  return VALID_ROUTES.includes(hash) ? hash : 'home';
+}
+
+function applyThemeClass(mode: ThemeMode) {
+  if (typeof window === 'undefined') return;
   try {
-    const saved = localStorage.getItem('tp254.theme');
-    if (saved === 'light' || saved === 'dark') return saved;
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
+    localStorage.setItem('tp254.theme', mode);
   } catch {}
-  return 'light';
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const dark = mode === 'dark' || (mode === 'system' && prefersDark);
+  document.documentElement.classList.toggle('dark', dark);
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('catalog');
-  const [theme, setThemeState] = useState<'light' | 'dark'>(getInitialTheme);
-  const [geo, setGeo] = useState<GeoInfo>(DEFAULT_GEO);
-  const [countryOverride, setCountryOverride] = useState<string>(() => {
+  const [route, setRoute] = useState<ActiveRoute>(initialRoute);
+  const [historyStack, setHistoryStack] = useState<ActiveRoute[]>([]);
+  const [lastRoute, setLastRoute] = useState<ActiveRoute | null>(() => {
     try {
-      return localStorage.getItem('tp254.country') || '';
+      const r = localStorage.getItem('tp254.lastRoute') as ActiveRoute | null;
+      return r && VALID_ROUTES.includes(r) && r !== 'admin' ? r : null;
     } catch {
-      return '';
+      return null;
     }
   });
 
-  const [authReady, setAuthReady] = useState(false);
-  const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
-  const [licenses, setLicenses] = useState<string[]>([]);
-  const [signalSubEnd, setSignalSubEnd] = useState<number>(0);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    try {
+      const s = localStorage.getItem('tp254.theme') as ThemeMode | null;
+      return s === 'light' || s === 'dark' || s === 'system' ? s : 'system';
+    } catch {
+      return 'system';
+    }
+  });
 
-  const [signals, setSignals] = useState<SignalRecord[]>([]);
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [allOrders, setAllOrders] = useState<OrderRecord[]>([]);
-  const [mt5Configs, setMt5Configs] = useState<Mt5ConfigRecord[]>([]);
-  const [tradeLogs, setTradeLogs] = useState<TradeLogRecord[]>([]);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
 
-  const [checkoutItem, setCheckoutItem] = useState<CatalogItem | null>(null);
-  const [selectedBotId, setSelectedBotId] = useState<string>('engine-ai');
+  const [config, setConfig] = useState<ServerConfig | null>(null);
+  const [prices, setPrices] = useState<Record<string, number> | null>(null);
+  const [dynamicCat, setDynamicCat] = useState<any>(null);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+
+  const [selectedBotId, setSelectedBotId] = useState<string | null>('engine-ai');
+  const [checkoutItem, setCheckoutItem] = useState<{ id: string; name: string; price: number; desc?: string } | null>(null);
+
   const [derivToken, setDerivToken] = useState<string>(() => {
     try {
-      return sessionStorage.getItem('tp254.derivToken') || '';
+      return localStorage.getItem('tp254.derivToken') || '';
     } catch {
       return '';
     }
   });
-  const [toast, setToast] = useState<string>('');
+  const [derivAccount, setDerivAccount] = useState<DerivAccountInfo | null>(null);
+  const [botRunning, setBotRunning] = useState(false);
+  const [tradeHistory, setTradeHistory] = useState<TradeLogEntry[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('tp254.trades') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [bannerNote, setBannerNote] = useState('');
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
+  const catalog: CatalogItem[] = mergeCatalog(dynamicCat, prices, route === 'admin');
+
+  const loadPublic = useCallback(async () => {
+    try {
+      const [cfg, pr, cat, ann] = await Promise.all([
+        apiFetch<ServerConfig>('/config'),
+        apiFetch<Record<string, number>>('/prices'),
+        apiFetch<any>('/catalog'),
+        apiFetch<{ announcements: Announcement[] }>('/announcements'),
+      ]);
+      setConfig(cfg);
+      setPrices(pr);
+      setDynamicCat(cat);
+      setAnnouncements(ann.announcements || []);
+    } catch {}
   }, []);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(''), 3500);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  // Apply theme class cleanly to <html>
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
+  const loadMe = useCallback(async () => {
+    if (!auth.currentUser) {
+      setUser(null);
+      return;
     }
     try {
-      localStorage.setItem('tp254.theme', theme);
+      const me = await apiFetch<UserProfile>('/me');
+      setUser(me);
     } catch {}
-  }, [theme]);
-
-  const handleSetTheme = useCallback(
-    async (next: 'light' | 'dark') => {
-      setThemeState(next);
-      if (fbUser) {
-        try {
-          await updateDoc(doc(db, 'users', fbUser.uid), {
-            theme: next,
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `users/${fbUser.uid}`);
-        }
-      }
-    },
-    [fbUser]
-  );
-
-  // Test Firestore connection on boot
-  useEffect(() => {
-    testFirestoreConnection();
   }, []);
 
-  // Load region / payment gateway availability
   useEffect(() => {
-    const qs = countryOverride ? `?country=${encodeURIComponent(countryOverride)}` : '';
-    fetch(`/api/geo${qs}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && data.country) setGeo(data);
-      })
-      .catch(() => {});
-  }, [countryOverride]);
+    initPwaServiceWorker();
+    void testFirestoreConnection();
+    void loadPublic();
 
-  const handleOverrideCountry = (code: string) => {
-    setCountryOverride(code);
-    try {
-      localStorage.setItem('tp254.country', code);
-    } catch {}
-    showToast(code === 'KE' ? 'Switched checkout region to Kenya (M-Pesa).' : 'Switched checkout region to International (PayPal).');
-  };
-
-  const isAdmin = Boolean(
-    fbUser?.email && fbUser.email.toLowerCase() === ADMIN_EMAIL && fbUser.emailVerified
-  );
-
-  // Firebase Auth listener & User profile bootstrap
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      setFbUser(user);
-      setAuthReady(true);
-      if (!user) {
-        setLicenses([]);
-        setSignalSubEnd(0);
-        setOrders([]);
-        setAllOrders([]);
-        setMt5Configs([]);
-        setTradeLogs([]);
-        return;
-      }
-
-      const userRef = doc(db, 'users', user.uid);
+    // Capture Deriv OAuth token (?token1=...) or PayPal return (?paypal=success&token=...)
+    const params = new URLSearchParams(window.location.search);
+    const oauthTok = params.get('token1');
+    if (oauthTok) {
       try {
-        const snap = await getDoc(userRef);
-        if (!snap.exists()) {
-          await setDoc(userRef, {
-            uid: user.uid,
-            displayName: (user.displayName || user.email?.split('@')[0] || 'Trader').slice(0, 80),
-            email: (user.email || '').slice(0, 160),
-            country: geo.country || 'KE',
-            theme,
-            licenses: [],
-            signalSubEnd: 0,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+        localStorage.setItem('tp254.derivToken', oauthTok);
+      } catch {}
+      setDerivToken(oauthTok);
+      setRoute('automated');
+      window.history.replaceState({}, '', '/#automated');
+    }
+
+    const unsub = onAuthStateChanged(auth, (fbUser) => {
+      setAuthEmail(fbUser?.email || null);
+      if (fbUser) {
+        void loadMe();
+        // Complete PayPal capture on return if logged in
+        const pStatus = params.get('paypal');
+        const ppOrderId = params.get('token');
+        if (pStatus === 'success' && ppOrderId) {
+          apiFetch('/paypal/capture-order', { method: 'POST', json: { paypalOrderId: ppOrderId } })
+            .then(() => {
+              setBannerNote('PayPal payment confirmed! Your access is unlocked.');
+              window.history.replaceState({}, '', '/#catalog');
+              void loadMe();
+            })
+            .catch(() => {});
         }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+      } else {
+        setUser(null);
       }
     });
-    return unsub;
-  }, []);
 
-  // Public published Forex Signals listener
-  useEffect(() => {
-    const q = query(
-      collection(db, 'signals'),
-      where('published', '==', true),
-      orderBy('createdAt', 'desc'),
-      limit(24)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: SignalRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            pair: String(data.pair || ''),
-            direction: data.direction === 'SELL' ? 'SELL' : 'BUY',
-            entry: String(data.entry || ''),
-            stopLoss: String(data.stopLoss || ''),
-            takeProfit: String(data.takeProfit || ''),
-            timeframe: String(data.timeframe || '15M'),
-            strategy: String(data.strategy || 'SMC'),
-            status: data.status || 'active',
-            published: Boolean(data.published),
-            notes: String(data.notes || ''),
-            authorId: String(data.authorId || ''),
-            createdAtMs: data.createdAt?.toMillis?.() || Date.now(),
-          };
-        });
-        setSignals(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'signals');
+    const onPop = () => {
+      if (window.location.pathname === '/admin') setRoute('admin');
+      else {
+        const h = window.location.hash.replace(/^#/, '') as ActiveRoute;
+        if (VALID_ROUTES.includes(h)) setRoute(h);
       }
-    );
-    return unsub;
-  }, []);
-
-  // Authenticated User Firestore Listeners
-  useEffect(() => {
-    if (!authReady || !fbUser) return;
-
-    const unsubUser = onSnapshot(
-      doc(db, 'users', fbUser.uid),
-      (snap) => {
-        if (snap.exists()) {
-          const d = snap.data();
-          setLicenses(Array.isArray(d.licenses) ? d.licenses : []);
-          setSignalSubEnd(Number(d.signalSubEnd || 0));
-        }
-      },
-      (error) => handleFirestoreError(error, OperationType.GET, `users/${fbUser.uid}`)
-    );
-
-    const ordersQuery = query(
-      collection(db, 'orders'),
-      where('userId', '==', fbUser.uid),
-      orderBy('createdAt', 'desc'),
-      limit(30)
-    );
-    const unsubOrders = onSnapshot(
-      ordersQuery,
-      (snap) => {
-        setOrders(
-          snap.docs.map((d) => {
-            const x = d.data();
-            return {
-              id: d.id,
-              userId: String(x.userId || ''),
-              userEmail: String(x.userEmail || ''),
-              itemId: String(x.itemId || ''),
-              itemName: String(x.itemName || ''),
-              method: x.method || 'mpesa_stk',
-              status: x.status || 'pending',
-              amountKsh: Number(x.amountKsh || 0),
-              amountUsd: Number(x.amountUsd || 0),
-              phone: String(x.phone || ''),
-              reference: String(x.reference || ''),
-              createdAtMs: x.createdAt?.toMillis?.() || Date.now(),
-            };
-          })
-        );
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'orders')
-    );
-
-    const mt5Query = query(
-      collection(db, 'mt5Configs'),
-      where('userId', '==', fbUser.uid),
-      limit(10)
-    );
-    const unsubMt5 = onSnapshot(
-      mt5Query,
-      (snap) => {
-        setMt5Configs(
-          snap.docs.map((d) => {
-            const x = d.data();
-            return {
-              id: d.id,
-              userId: String(x.userId || ''),
-              eaId: x.eaId === 'straddle-system' ? 'straddle-system' : 'xauusd-system',
-              eaKey: String(x.eaKey || ''),
-              symbol: String(x.symbol || 'XAUUSD'),
-              mode: x.mode === 'scalping' ? 'scalping' : 'intraday',
-              lotSize: Number(x.lotSize || 0.01),
-              enabled: Boolean(x.enabled),
-              updatedAtMs: x.updatedAt?.toMillis?.() || Date.now(),
-            };
-          })
-        );
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'mt5Configs')
-    );
-
-    const logsQuery = query(
-      collection(db, 'tradeLogs'),
-      where('userId', '==', fbUser.uid),
-      orderBy('createdAt', 'desc'),
-      limit(25)
-    );
-    const unsubLogs = onSnapshot(
-      logsQuery,
-      (snap) => {
-        setTradeLogs(
-          snap.docs.map((d) => {
-            const x = d.data();
-            return {
-              id: d.id,
-              userId: String(x.userId || ''),
-              botId: String(x.botId || ''),
-              botName: String(x.botName || ''),
-              market: String(x.market || ''),
-              contract: String(x.contract || ''),
-              stake: Number(x.stake || 0),
-              profit: Number(x.profit || 0),
-              accountType: x.accountType === 'real' ? 'real' : 'demo',
-              createdAtMs: x.createdAt?.toMillis?.() || Date.now(),
-            };
-          })
-        );
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'tradeLogs')
-    );
-
-    let unsubAdminOrders = () => {};
-    if (isAdmin) {
-      const allOrdersQuery = query(
-        collection(db, 'orders'),
-        orderBy('createdAt', 'desc'),
-        limit(40)
-      );
-      unsubAdminOrders = onSnapshot(
-        allOrdersQuery,
-        (snap) => {
-          setAllOrders(
-            snap.docs.map((d) => {
-              const x = d.data();
-              return {
-                id: d.id,
-                userId: String(x.userId || ''),
-                userEmail: String(x.userEmail || ''),
-                itemId: String(x.itemId || ''),
-                itemName: String(x.itemName || ''),
-                method: x.method || 'mpesa_stk',
-                status: x.status || 'pending',
-                amountKsh: Number(x.amountKsh || 0),
-                amountUsd: Number(x.amountUsd || 0),
-                phone: String(x.phone || ''),
-                reference: String(x.reference || ''),
-                createdAtMs: x.createdAt?.toMillis?.() || Date.now(),
-              };
-            })
-          );
-        },
-        (error) => handleFirestoreError(error, OperationType.LIST, 'orders')
-      );
-    }
-
-    return () => {
-      unsubUser();
-      unsubOrders();
-      unsubMt5();
-      unsubLogs();
-      unsubAdminOrders();
     };
-  }, [authReady, fbUser, isAdmin]);
+    window.addEventListener('popstate', onPop);
+    return () => {
+      unsub();
+      window.removeEventListener('popstate', onPop);
+    };
+  }, [loadMe, loadPublic]);
 
-  const handleSignIn = async () => {
-    try {
-      await signInWithGoogle();
-      showToast('Signed in with Firebase.');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Sign-in cancelled.');
+  useEffect(() => {
+    applyThemeClass(theme);
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const listener = () => {
+      if (theme === 'system') applyThemeClass('system');
+    };
+    mq.addEventListener('change', listener);
+    return () => mq.removeEventListener('change', listener);
+  }, [theme]);
+
+  const navigate = (next: ActiveRoute, botId?: string) => {
+    if (botId) setSelectedBotId(botId);
+    if (next !== route) {
+      setHistoryStack((prev) => [...prev.slice(-10), route]);
+      setRoute(next);
+      if (next === 'admin') {
+        window.history.pushState({}, '', '/admin');
+      } else {
+        try {
+          localStorage.setItem('tp254.lastRoute', next);
+        } catch {}
+        setLastRoute(next);
+        window.history.pushState({}, '', `/#${next}`);
+      }
     }
   };
 
-  const handleSignOut = async () => {
-    await signOutUser();
-    showToast('Signed out.');
+  const goBack = () => {
+    const prev = historyStack[historyStack.length - 1] || 'home';
+    setHistoryStack((s) => s.slice(0, -1));
+    setRoute(prev);
+    window.history.pushState({}, '', prev === 'admin' ? '/admin' : `/#${prev}`);
   };
 
-  const handleSaveDerivToken = (token: string) => {
-    setDerivToken(token);
+  const handleSetDerivToken = (tok: string) => {
+    setDerivToken(tok);
     try {
-      sessionStorage.setItem('tp254.derivToken', token);
+      if (tok) localStorage.setItem('tp254.derivToken', tok);
+      else localStorage.removeItem('tp254.derivToken');
     } catch {}
-    showToast('Deriv account connected for this session.');
   };
 
-  const handlePaymentConfirmed = (itemId: string) => {
-    if (itemId === 'signals-monthly') {
-      setSignalSubEnd(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    } else {
-      setLicenses((prev) => (prev.includes(itemId) ? prev : [...prev, itemId]));
+  const handleAddTrade = (t: TradeLogEntry) => {
+    setTradeHistory((prev) => {
+      const next = [t, ...prev].slice(0, 100);
+      try {
+        localStorage.setItem('tp254.trades', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleBuySpecial = (id: 'signals' | 'aiscan' | 'engine' | 'xauusd-system' | 'straddle-system') => {
+    const cat = catalog.find((c) => c.id === id);
+    if (cat) {
+      setCheckoutItem(cat);
+      return;
     }
-    showToast('Payment confirmed and item unlocked.');
+    const spec = SPECIAL_PRODUCTS[id];
+    if (spec) {
+      setCheckoutItem({
+        id: spec.id,
+        name: spec.name,
+        price: prices?.[spec.id] || spec.defaultPrice,
+        desc: spec.desc,
+      });
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8FAFD] text-[#131722] transition-colors duration-150 dark:bg-black dark:text-[#D1D4DC]">
+    <div className="min-h-screen bg-[#F8FAFD] text-[#131722] dark:bg-black dark:text-[#D1D4DC] pb-20 lg:pb-8">
+      <OfflineIndicator />
       <Navbar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
+        route={route}
+        onNavigate={(r) => navigate(r)}
+        onBack={goBack}
+        canGoBack={historyStack.length > 0 || route !== 'home'}
         theme={theme}
-        onToggleTheme={() => handleSetTheme(theme === 'dark' ? 'light' : 'dark')}
-        userEmail={fbUser?.email || null}
-        userName={fbUser?.displayName || null}
-        onAuthClick={() => (fbUser ? setActiveTab('settings') : handleSignIn())}
+        onChangeTheme={(t) => {
+          setTheme(t);
+          if (user) void apiFetch('/me', { method: 'POST', json: { theme: t } }).catch(() => {});
+        }}
+        user={user}
+        authEmail={authEmail}
+        onOpenAuth={() => setAuthOpen(true)}
+        derivAccount={derivAccount}
+        botRunning={botRunning}
       />
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
-        {activeTab === 'catalog' && (
-          <CatalogView
-            geo={geo}
-            licenses={licenses}
-            signalSubEnd={signalSubEnd}
-            isAdmin={isAdmin}
-            onUnlock={(item) => setCheckoutItem(item)}
-            onNavigate={setActiveTab}
-            onRunAutomated={(item) => {
-              setSelectedBotId(item.id);
-              setActiveTab('automated');
-            }}
-          />
-        )}
+      <main className="lg:pl-60">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6">
+          {bannerNote && (
+            <div className="mb-4 rounded-xl border border-[#089981]/30 bg-[#089981]/10 p-3 text-xs font-semibold text-[#089981]">
+              {bannerNote}
+            </div>
+          )}
 
-        {activeTab === 'automated' && (
-          <AutomatedView
-            selectedBotId={selectedBotId}
-            onSelectBotId={setSelectedBotId}
-            licenses={licenses}
-            isAdmin={isAdmin}
-            userId={fbUser?.uid || null}
-            derivToken={derivToken}
-            onSaveDerivToken={handleSaveDerivToken}
-            tradeLogs={tradeLogs}
-            onUnlockBot={(item) => setCheckoutItem(item)}
-          />
-        )}
+          {user && !user.verified && <VerifyBanner email={user.email} verified={user.verified} onVerified={() => void loadMe()} />}
 
-        {activeTab === 'forex' && (
-          <ForexMt5View
-            signals={signals}
-            mt5Configs={mt5Configs}
-            licenses={licenses}
-            signalSubEnd={signalSubEnd}
-            isAdmin={isAdmin}
-            userId={fbUser?.uid || null}
-            onUnlockItem={(item) => setCheckoutItem(item)}
-            onRequireSignIn={handleSignIn}
-          />
-        )}
+          {route === 'home' && (
+            <HomeView
+              user={user}
+              config={config}
+              catalog={catalog}
+              announcements={announcements}
+              lastRoute={lastRoute}
+              onNavigate={navigate}
+              onOpenAuth={() => setAuthOpen(true)}
+              onBuy={(item) => setCheckoutItem(item)}
+            />
+          )}
 
-        {activeTab === 'charts' && <ChartsView theme={theme} />}
+          {route === 'catalog' && (
+            <CatalogView
+              catalog={catalog}
+              config={config}
+              user={user}
+              onBuy={(item) => setCheckoutItem(item)}
+              onOpenBot={navigate}
+              onRequireAuth={() => setAuthOpen(true)}
+            />
+          )}
 
-        {activeTab === 'settings' && (
-          <SettingsView
-            theme={theme}
-            onSetTheme={handleSetTheme}
-            geo={geo}
-            onOverrideCountry={handleOverrideCountry}
-            userId={fbUser?.uid || null}
-            userEmail={fbUser?.email || null}
-            userName={fbUser?.displayName || null}
-            isAdmin={isAdmin}
-            licenses={licenses}
-            signalSubEnd={signalSubEnd}
-            orders={orders}
-            allOrders={allOrders}
-            onSignIn={handleSignIn}
-            onSignOut={handleSignOut}
-          />
-        )}
+          {route === 'automated' && (
+            <AutomatedView
+              catalog={catalog}
+              user={user}
+              selectedBotId={selectedBotId}
+              onSelectBot={setSelectedBotId}
+              derivToken={derivToken}
+              onSetDerivToken={handleSetDerivToken}
+              derivAccount={derivAccount}
+              onSetDerivAccount={setDerivAccount}
+              onAddTrade={handleAddTrade}
+              onRunningChange={setBotRunning}
+              onBuy={(item) => setCheckoutItem(item)}
+              onRequireAuth={() => setAuthOpen(true)}
+            />
+          )}
+
+          {(route === 'scanner' || route === 'markets' || route === 'trades' || route === 'po' || route === 'news') && (
+            <ToolsView
+              tab={route}
+              onNavigate={navigate}
+              tradeHistory={tradeHistory}
+              onClearTrades={() => {
+                setTradeHistory([]);
+                try {
+                  localStorage.removeItem('tp254.trades');
+                } catch {}
+              }}
+              user={user}
+              onRequireAuth={() => setAuthOpen(true)}
+            />
+          )}
+
+          {route === 'charts' && <ChartsView />}
+
+          {(route === 'forex' || route === 'aiscan' || route === 'engine' || route === 'broker') && (
+            <ForexMt5View
+              tab={route}
+              onNavigate={navigate}
+              config={config}
+              prices={prices}
+              user={user}
+              catalog={catalog}
+              onRequireAuth={() => setAuthOpen(true)}
+              onBuySpecial={handleBuySpecial}
+            />
+          )}
+
+          {route === 'settings' && (
+            <SettingsView
+              user={user}
+              config={config}
+              theme={theme}
+              onChangeTheme={setTheme}
+              onRefreshUser={() => void loadMe()}
+              onClearDerivToken={() => handleSetDerivToken('')}
+              onOpenAuth={() => setAuthOpen(true)}
+              onNavigate={navigate}
+            />
+          )}
+
+          {route === 'admin' && (
+            <AdminView
+              catalog={catalog}
+              config={config}
+              prices={prices}
+              onRefreshGlobal={() => {
+                void loadPublic();
+                void loadMe();
+              }}
+            />
+          )}
+
+          {/* Visible Risk Disclaimer Footer */}
+          <footer className="mt-10 pt-5 border-t border-slate-200 dark:border-[#1E222D] text-[11px] text-slate-500 dark:text-[#787B86] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <strong>Risk Warning:</strong> Trading Deriv contracts, Forex, Gold, and automated robots involves significant risk of loss. Always test on a Demo account first. Past signals do not guarantee future results.
+            </div>
+            <div className="shrink-0 font-mono">TRADERSPRO254</div>
+          </footer>
+        </div>
       </main>
 
-      <footer className="border-t border-[#E0E3EB] bg-white py-5 dark:border-[#1E222D] dark:bg-black">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 text-xs text-[#787B86] sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <p>
-            Trading carries a high risk of loss. Test every strategy on a Deriv or MT5 demo account first and only risk capital you can afford to lose.
-          </p>
-          <div className="flex items-center gap-4 shrink-0">
-            <a
-              href="/api/export-zip"
-              download="traderspro254-github-vercel.zip"
-              className="font-medium text-[#131722] hover:text-[#2962FF] dark:text-[#D1D4DC] dark:hover:text-[#2962FF]"
-            >
-              Export Vercel ZIP
-            </a>
-            <span>·</span>
-            <span>TRADERSPRO254</span>
-          </div>
-        </div>
-      </footer>
-
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={() => void loadMe()} />
       <CheckoutModal
+        open={Boolean(checkoutItem)}
         item={checkoutItem}
-        geo={geo}
-        userId={fbUser?.uid || null}
-        userEmail={fbUser?.email || null}
+        config={config}
+        user={user}
         onClose={() => setCheckoutItem(null)}
-        onRequireSignIn={handleSignIn}
-        onPaymentConfirmed={handlePaymentConfirmed}
+        onRequireAuth={() => {
+          setCheckoutItem(null);
+          setAuthOpen(true);
+        }}
+        onApproved={() => {
+          void loadMe();
+        }}
       />
-
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-5 right-5 z-50 rounded-md border border-[#1E222D] bg-[#131722] px-4 py-2.5 text-xs font-medium text-white shadow-lg dark:border-[#2A2E39] dark:bg-[#131722] dark:text-[#D1D4DC]"
-        >
-          {toast}
-        </div>
-      )}
     </div>
   );
 }

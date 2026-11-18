@@ -2,13 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TRADERSPRO254 — Deriv Bots, MT5 Systems & Forex Signals</title>
-    <meta name="description" content="Deriv trading bots, automated digit & accumulator strategies, MT5 Expert Advisors, and SMC/ICT forex signals by TRADERSPRO254." />
-    <meta property="og:title" content="TRADERSPRO254 — Deriv Bots, MT5 Systems & Forex Signals" />
-    <meta property="og:description" content="Deriv trading bots, automated digit & accumulator strategies, MT5 Expert Advisors, and SMC/ICT forex signals." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>TRADERSPRO254 — Deriv Bots, MT5 Systems &amp; Forex Signals</title>
+    <meta name="description" content="Deriv trading bots, automated digit &amp; accumulator strategies, MT5 Expert Advisors, and SMC/ICT forex signals by TRADERSPRO254." />
+    <meta property="og:title" content="TRADERSPRO254 — Deriv Bots, MT5 Systems &amp; Forex Signals" />
+    <meta property="og:description" content="Deriv trading bots, automated digit &amp; accumulator strategies, MT5 Expert Advisors, and SMC/ICT forex signals." />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og.png" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TRADERSPRO" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -16,7 +25,8 @@
       try {
         var savedTheme = localStorage.getItem('tp254.theme');
         var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        var useDark = savedTheme === 'dark' || ((!savedTheme || savedTheme === 'system') && prefersDark);
+        if (useDark) {
           document.documentElement.classList.add('dark');
         } else {
           document.documentElement.classList.remove('dark');

@@ -1,48 +1,18 @@
-export type ProductSection = 'automated' | 'deriv' | 'forex' | 'signals';
-export type ProductKind = 'strategy' | 'xml' | 'file' | 'subscription';
+import type { CatalogItem, ServerConfig } from '../types/app';
 
-export interface CatalogItem {
-  id: string;
-  name: string;
-  section: ProductSection;
-  category: 'accumulators' | 'over-under' | 'digits' | 'even-odd' | 'rise-fall' | 'forex' | 'signals';
-  kind: ProductKind;
-  platform: string;
-  desc: string;
-  how: string;
-  priceKsh: number;
-  builtin?: boolean;
-  locked: boolean;
-  strategyPreset?: 'over-under' | 'even-odd' | 'differs' | 'matches' | 'rise-fall' | 'accumulators' | 'digits-all';
-}
-
-export const ADMIN_EMAIL = 'cyyfuego@gmail.com';
-export const DEFAULT_USD_KSH_RATE = Number(import.meta.env.VITE_USD_KSH_RATE || 130) || 130;
-
-export const DERIV_MARKETS = [
-  { symbol: 'R_10', label: 'Volatility 10 Index', pip: 3 },
-  { symbol: 'R_25', label: 'Volatility 25 Index', pip: 3 },
-  { symbol: 'R_50', label: 'Volatility 50 Index', pip: 4 },
-  { symbol: 'R_75', label: 'Volatility 75 Index', pip: 4 },
-  { symbol: 'R_100', label: 'Volatility 100 Index', pip: 2 },
-  { symbol: '1HZ10V', label: 'Volatility 10 (1s) Index', pip: 2 },
-  { symbol: '1HZ100V', label: 'Volatility 100 (1s) Index', pip: 2 },
-] as const;
-
-export const CATALOG_ITEMS: CatalogItem[] = [
+export const BUILTIN_ITEMS: CatalogItem[] = [
   {
     id: 'engine-ai',
-    name: 'Engine AI Digit Runner',
+    name: 'Engine AI Bot (Built-In)',
     section: 'automated',
     category: 'digits',
-    kind: 'strategy',
+    kind: 'builtin',
     platform: 'Deriv API',
-    desc: 'Built-in digit contract runner supporting Over, Under, Even, Odd, Matches, and Differs with fixed stake, stop-loss, and take-profit limits.',
-    how: 'Open Automated, paste your Deriv token (Read + Trade), pick Demo or Real, set stake and stop loss, then start.',
-    priceKsh: 0,
-    builtin: true,
+    desc: 'Free built-in digit bot. Watches markets flagged by the cloud Market Engine and trades only when live browser ticks confirm the pattern.',
+    how: 'Open Automated Trading, pick Engine AI Bot, connect your Deriv API token (Read + Trade), test on demo first, and press Start.',
+    price: 0,
+    status: 'live',
     locked: false,
-    strategyPreset: 'digits-all',
   },
   {
     id: 'killer',
@@ -51,11 +21,11 @@ export const CATALOG_ITEMS: CatalogItem[] = [
     category: 'accumulators',
     kind: 'strategy',
     platform: 'Deriv API',
-    desc: 'Scans volatility markets after 15+ tick runs, waits 5 ticks into the new cycle, enters a 5% accumulator, and closes at 15 ticks.',
-    how: 'Connect your Deriv API token in Automated, select Accumulator Killer, configure stake and stop loss, and test on demo first.',
-    priceKsh: 5000,
+    desc: 'Scans all markets. When the run that just ended lasted over 15 ticks, it waits 5 ticks into the new run, enters an accumulator at 5% and closes at 15 ticks. Shows the tick counter, profit and loss.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 5000,
+    status: 'live',
     locked: true,
-    strategyPreset: 'accumulators',
   },
   {
     id: 'ninja',
@@ -64,115 +34,11 @@ export const CATALOG_ITEMS: CatalogItem[] = [
     category: 'accumulators',
     kind: 'strategy',
     platform: 'Deriv API',
-    desc: 'Arms markets where a 20+ tick run resets, buys a 5% growth accumulator 5 ticks into the fresh run, and exits cleanly after 5 to 10 ticks.',
-    how: 'Connect your Deriv API token in Automated, configure your risk cap, and test on demo before switching to real.',
-    priceKsh: 7500,
+    desc: 'Scans all markets. When a run longer than 20 ticks crashes, that market is armed. The Ninja buys an accumulator at 5% growth 5 ticks into the new run, and closes after 5 to 10 ticks.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 7500,
+    status: 'live',
     locked: true,
-    strategyPreset: 'accumulators',
-  },
-  {
-    id: 'over-under-auto',
-    name: 'Auto Over / Under Killer',
-    section: 'automated',
-    category: 'over-under',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Scans live tick distributions across all markets and picks the Over or Under digit barrier with the strongest short-term imbalance.',
-    how: 'Run directly inside the Automated workspace with live digit frequency confirmation.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'over-under',
-  },
-  {
-    id: 'differs-auto',
-    name: 'Auto Differs Strategy',
-    section: 'automated',
-    category: 'digits',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Tracks the least-frequent digit over the past 100 ticks, waits for a fresh print, and places a high-probability Differs contract.',
-    how: 'Open Automated, select Auto Differs, verify on demo ticks, and monitor profit/loss live.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'differs',
-  },
-  {
-    id: 'matches-auto',
-    name: 'Auto Matches & Differs',
-    section: 'automated',
-    category: 'digits',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Reads the last 100 ticks across 7 synthetic indices, isolates outlier digit clusters, and executes Matches or Differs on trigger.',
-    how: 'Connect Deriv token in Automated and start with low demo stakes.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'matches',
-  },
-  {
-    id: 'even-odd-auto',
-    name: 'TRADERSPRO Auto Even / Odd',
-    section: 'automated',
-    category: 'even-odd',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Monitors consecutive Even or Odd tick streaks (3 to 4 ticks) and executes mean-reversion contracts with strict stop limits.',
-    how: 'Connect Deriv token in Automated and monitor live streak triggers.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'even-odd',
-  },
-  {
-    id: 'rise-fall-auto',
-    name: 'Auto Rise / Fall Momentum',
-    section: 'automated',
-    category: 'rise-fall',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Evaluates 5-tick directional velocity across Volatility indices and enters Rise or Fall when directional consensus aligns.',
-    how: 'Connect Deriv token in Automated and choose your preferred index.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'rise-fall',
-  },
-  {
-    id: 'digit-trader',
-    name: 'Auto Digit Trader Suite',
-    section: 'automated',
-    category: 'over-under',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Unified automated workspace bot covering Over, Under, Differs, Matches, Even, Odd, Rise, and Fall under one risk engine.',
-    how: 'Unlock once to access all automated preset modes in the runner.',
-    priceKsh: 5000,
-    locked: true,
-    strategyPreset: 'digits-all',
-  },
-  {
-    id: 'under-auto',
-    name: 'Auto Under Recovery Bot',
-    section: 'automated',
-    category: 'over-under',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Triggers Under 8 when the last digit hits 8 or 9, and shifts to Under 7 recovery if a 7, 8, or 9 prints after a loss.',
-    how: 'Open Automated, configure max consecutive loss cap, and run on demo first.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'over-under',
-  },
-  {
-    id: 'over-auto',
-    name: 'Auto Over Recovery Bot',
-    section: 'automated',
-    category: 'over-under',
-    kind: 'strategy',
-    platform: 'Deriv API',
-    desc: 'Triggers Over 1 when the last digit touches 0 or 1, stepping to Over 2 recovery when a 0, 1, or 2 appears after a loss.',
-    how: 'Open Automated, configure max stake and stop loss, and test on demo.',
-    priceKsh: 2500,
-    locked: true,
-    strategyPreset: 'over-under',
   },
   {
     id: 'recover-bot-v8',
@@ -180,82 +46,204 @@ export const CATALOG_ITEMS: CatalogItem[] = [
     section: 'deriv',
     category: 'over-under',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Downloadable XML workspace bot for Deriv Bot featuring structured Digit Over entries and disciplined recovery stepping.',
-    how: 'Download XML -> Open Deriv Bot -> Import -> Load XML -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Digit Over bot with loss recovery.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'under8-recovery',
-    name: 'Under 8 Recovery XML',
+    name: 'Under 8 Recovery',
     section: 'deriv',
     category: 'over-under',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Single-market Digit Under 8 XML bot engineered without aggressive market switching for steady contract testing.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Digit Under bot with recovery, no market switcher.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'unstoppable-differ',
-    name: 'Unstoppable Differ XML',
+    name: 'Unstoppable Differ',
     section: 'deriv',
     category: 'digits',
+    sub: 'differs',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Lightweight Digit Differs XML strategy designed for fast execution inside the official Deriv Bot workspace.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Digit Differs bot.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'ai-style-digitmatch',
-    name: 'AI Style Digit Match XML',
+    name: 'AI Style Digit Match',
     section: 'deriv',
     category: 'digits',
+    sub: 'matches',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Digit Matches XML file calibrated for frequency-aligned entries with clean stop-loss boundaries.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Digit Matches bot. Repaired copy, test on demo.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'wallstreet-fast-match',
-    name: 'Wallstreet Fast Match XML',
+    name: 'Wallstreet Fast Match',
     section: 'deriv',
     category: 'digits',
+    sub: 'matches',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'High-tempo Digit Matches XML bot optimized for short tick intervals on Volatility 10 (1s) and Volatility 100.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Fast Digit Matches bot. Repaired copy, test on demo.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'rise-fall-auto-direction',
-    name: 'Rise / Fall Auto Direction XML',
+    name: 'Rise/Fall Auto Direction',
     section: 'deriv',
     category: 'rise-fall',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Directional Rise/Fall XML bot using EMA slope confirmation inside Deriv Bot.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 1500,
+    platform: 'Deriv Bot',
+    desc: 'Chooses Rise or Fall automatically.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 1500,
+    status: 'live',
     locked: true,
   },
   {
     id: 'accumulators-20-profit',
-    name: 'Accumulators 20 Profit XML',
+    name: 'Accumulators 20 Profit',
     section: 'deriv',
     category: 'accumulators',
     kind: 'xml',
-    platform: 'Deriv Bot XML',
-    desc: 'Deriv Bot XML strategy targeting fixed accumulator profit increments with auto take-profit reset.',
-    how: 'Download XML -> Deriv Bot -> Import -> Test on Demo.',
-    priceKsh: 2000,
+    platform: 'Deriv Bot',
+    desc: 'Accumulator bot targeting a fixed profit per trade.',
+    how: 'Unlock, download the .xml file, open Deriv Bot -> Import -> load the XML -> Run on demo first.',
+    price: 2000,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'over-under-auto',
+    name: 'TRADERSPRO Auto Over/Under Killer',
+    section: 'automated',
+    category: 'over-under',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: ['over-under', 'under'],
+    desc: 'No digits to enter. The AI scans every market, tests every Over and Under digit, and trades the one that beats chance the most, on its own.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'differs-auto',
+    name: 'Auto Differs',
+    section: 'automated',
+    category: 'digits',
+    sub: 'differs',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: ['differs'],
+    desc: 'Finds the least-appearing digit over 100 ticks, waits for it to print, then trades Differs.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'matches-auto',
+    name: 'TRADERSPRO Auto Matches & Differs',
+    section: 'automated',
+    category: 'digits',
+    sub: 'matches',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: ['matches'],
+    desc: 'The AI reads the last 100 ticks of all 10 markets, finds the digit that stands out most, and chooses Matches or Differs itself.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'even-odd-auto',
+    name: 'TRADERSPRO Auto Even/Odd',
+    section: 'automated',
+    category: 'even-odd',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: ['even', 'odd'],
+    desc: 'The AI scans every market for 3 to 4 even (or odd) ticks in a row and trades the opposite on the best market.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'rise-fall-auto',
+    name: 'Auto Rise / Fall',
+    section: 'automated',
+    category: 'rise-fall',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: ['rise', 'fall'],
+    desc: 'Scans all markets for a clear 5-tick direction and trades Rise or Fall.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'digit-trader',
+    name: 'Auto Digit Trader (all contracts)',
+    section: 'automated',
+    category: 'over-under',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    presets: null,
+    desc: 'One bot for Over, Under, Differs, Matches, Even, Odd, Rise and Fall.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 5000,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'under-auto',
+    name: 'TRADERSPRO Auto Under Bot',
+    section: 'automated',
+    category: 'even-odd',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    desc: 'Scans all markets. When the last digit touches 8 or 9 it places Under 8. After a loss it recovers with Under 7 when a 7, 8 or 9 touches.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
+    locked: true,
+  },
+  {
+    id: 'over-auto',
+    name: 'TRADERSPRO Auto Over Bot',
+    section: 'automated',
+    category: 'even-odd',
+    kind: 'strategy',
+    platform: 'Deriv API',
+    desc: 'Scans all markets. When the last digit touches 0 or 1 it places Over 1. After a loss it recovers with Over 2 when a 0, 1 or 2 touches.',
+    how: 'Open Automated Trading, connect your Deriv token, set stake and stop loss, and press Start. Test on demo first.',
+    price: 2500,
+    status: 'live',
     locked: true,
   },
   {
@@ -263,11 +251,13 @@ export const CATALOG_ITEMS: CatalogItem[] = [
     name: 'ChartLord XAUUSD Auto System',
     section: 'forex',
     category: 'forex',
+    sub: 'autosystem',
     kind: 'file',
     platform: 'MT5 Expert Advisor',
-    desc: 'Gold (XAUUSD) MT5 Expert Advisor combining 4H/1H liquidity sweeps, FVG zones, 5M order-block entries, and news protection with web remote control.',
-    how: 'Download .mq5 -> Place in MQL5/Experts -> Compile in MetaEditor -> Sync EA Key in Forex & MT5.',
-    priceKsh: 10000,
+    desc: 'Gold (XAUUSD) robot for MT5: 4H/1H direction, liquidity sweep or FVG, 5M order-block entry, Intraday & Scalping modes controlled live from this website.',
+    how: 'Pay, download the .mq5 file, put it in MT5 -> MQL5/Experts, compile (F7), allow this site in Tools -> Options -> Expert Advisors -> WebRequest, attach to XAUUSD, and paste your EA key from the Broker tab.',
+    price: 10000,
+    status: 'live',
     locked: true,
   },
   {
@@ -275,92 +265,88 @@ export const CATALOG_ITEMS: CatalogItem[] = [
     name: 'ChartLord Straddle System',
     section: 'forex',
     category: 'forex',
+    sub: 'autosystem',
     kind: 'file',
     platform: 'MT5 Expert Advisor',
-    desc: 'Precision Gold (XAUUSD) mean-reversion scalper for non-news sessions, catching liquidity sweeps with fixed stop protection and web lot/toggle control.',
-    how: 'Download .mq5 -> Place in MQL5/Experts -> Compile in MetaEditor -> Sync EA Key in Forex & MT5.',
-    priceKsh: 10000,
-    locked: true,
-  },
-  {
-    id: 'signals-monthly',
-    name: 'SMC / ICT Live Forex Signals (30 Days)',
-    section: 'signals',
-    category: 'signals',
-    kind: 'subscription',
-    platform: 'Web & Alerts',
-    desc: 'Real-time Gold (XAUUSD), EURUSD, GBPUSD, and Volatility 75 trade setups with Entry, Stop Loss, Take Profit, and SMC structure notes.',
-    how: 'Unlock to view full live entry, SL, TP, and management updates inside Forex & MT5.',
-    priceKsh: 500,
+    desc: 'Fast gold (XAUUSD) scalper for MT5. Trades on days with no high-impact USD news after liquidity sweeps, with tight stops and remote pause/lot control.',
+    how: 'Pay, download the .mq5 file, put it in MT5 -> MQL5/Experts, compile (F7), allow this site in WebRequest, attach to XAUUSD, and paste your EA key from the Broker tab.',
+    price: 10000,
+    status: 'live',
     locked: true,
   },
 ];
 
-export function kshToUsd(ksh: number, rate = DEFAULT_USD_KSH_RATE): number {
-  if (ksh <= 0) return 0;
-  return Math.ceil(ksh / (rate || 130));
+export const SPECIAL_PRODUCTS: Record<string, { id: string; name: string; defaultPrice: number; desc: string }> = {
+  signals: {
+    id: 'signals',
+    name: 'Forex signals, 1 week',
+    defaultPrice: 500,
+    desc: '7 days of unlimited live SMC/ICT forex setups across major pairs & Gold.',
+  },
+  aiscan: {
+    id: 'aiscan',
+    name: 'AI scanner, 5 signals',
+    defaultPrice: 1000,
+    desc: '5-signal pack for the Top-Down AI Scanner (Gold, EURUSD, GBPUSD, USDJPY, Oil).',
+  },
+  engine: {
+    id: 'engine',
+    name: 'TRADERSPRO Market Engine site (lifetime)',
+    defaultPrice: 27000,
+    desc: 'Lifetime unlock for cloud Market Engine entries, hourly AI market briefs, and Engine mode on MT5 robots.',
+  },
+};
+
+export function mergeCatalog(
+  dynamic: { extra?: CatalogItem[]; hide?: string[]; edit?: Record<string, Partial<CatalogItem>> } | null,
+  prices: Record<string, number> | null,
+  includeHidden = false
+): CatalogItem[] {
+  const hideSet = new Set(dynamic?.hide || []);
+  const editMap = dynamic?.edit || {};
+  const extras = Array.isArray(dynamic?.extra) ? dynamic!.extra : [];
+  const all = [...BUILTIN_ITEMS, ...extras.map((e) => ({ ...e, extra: true }))];
+  return all
+    .map((item) => {
+      const ov = editMap[item.id] || {};
+      const livePrice = prices && typeof prices[item.id] === 'number' ? prices[item.id] : item.price;
+      return {
+        ...item,
+        ...ov,
+        price: item.id === 'engine-ai' ? 0 : livePrice,
+        hidden: hideSet.has(item.id),
+      };
+    })
+    .filter((item) => includeHidden || (!item.hidden && item.status !== 'soon'));
 }
 
-export function formatKsh(ksh: number): string {
-  return `KSh ${Math.round(ksh).toLocaleString()}`;
-}
-
-export function formatUsd(ksh: number, rate = DEFAULT_USD_KSH_RATE): string {
-  const usd = kshToUsd(ksh, rate);
-  return `$${usd}`;
-}
-
-export function generateBotDownloadContent(item: CatalogItem): { filename: string; content: string; mime: string } {
-  if (item.kind === 'xml') {
-    const xml = `<xml xmlns="https://developers.google.com/blockly/xml" is_dbot="true" collection="false">
-  <variables>
-    <variable id="stake">Stake</variable>
-    <variable id="stoploss">StopLoss</variable>
-  </variables>
-  <block type="trade_definition" id="root" x="0" y="0">
-    <field name="MARKET_LIST">synthetic_index</field>
-    <field name="SUBMARKET_LIST">random_index</field>
-    <field name="SYMBOL_LIST">R_100</field>
-    <field name="TRADETYPECAT_LIST">digits</field>
-    <field name="TRADETYPE_LIST">${item.category === 'rise-fall' ? 'callput' : 'overunder'}</field>
-    <comment pinned="false">${item.name} — TRADERSPRO254 Licensed Strategy</comment>
-  </block>
-</xml>`;
-    return { filename: `${item.id}.xml`, content: xml, mime: 'application/xml' };
+export function formatProductPrice(
+  priceKsh: number,
+  config: ServerConfig | null,
+  options?: { short?: boolean }
+): { primary: string; secondary: string | null; usd: number } {
+  if (!priceKsh || priceKsh <= 0) {
+    return { primary: 'Free', secondary: null, usd: 0 };
   }
-
-  if (item.kind === 'file') {
-    const mq5 = `//+------------------------------------------------------------------+
-//| ${item.name} (TRADERSPRO254)
-//| Syncs remote enable/mode/lot settings via your EA Key
-//+------------------------------------------------------------------+
-#property copyright "TRADERSPRO254"
-#property version   "2.00"
-input string InpEAKey = "TP254-YOUR-KEY";
-input double InpBaseLot = 0.01;
-input bool   InpIntradayMode = true;
-
-int OnInit() {
-   Print("${item.name} initialized for ", _Symbol, " | Key: ", InpEAKey);
-   return(INIT_SUCCEEDED);
-}
-void OnTick() {
-   // Remote state verified from TRADERSPRO254 MT5 Control Panel
-}
-`;
-    return { filename: `${item.id}.mq5`, content: mq5, mime: 'text/plain' };
+  const usdRate = config?.usdRate || 130;
+  const usd = Math.ceil(priceKsh / usdRate);
+  const isKenya = config ? config.isKenya : true;
+  if (isKenya) {
+    return {
+      primary: `${priceKsh.toLocaleString()} KSh`,
+      secondary: options?.short ? null : `approx $${usd} USD`,
+      usd,
+    };
   }
-
-  const json = JSON.stringify(
-    {
-      id: item.id,
-      name: item.name,
-      platform: item.platform,
-      preset: item.strategyPreset || 'digits-all',
-      exportedAt: new Date().toISOString(),
-    },
-    null,
-    2
-  );
-  return { filename: `${item.id}.json`, content: json, mime: 'application/json' };
+  const cur = config?.currency;
+  let localEst: string | null = null;
+  if (cur && cur.code !== 'USD' && cur.rate > 0) {
+    const val = Math.round(usd * cur.rate);
+    localEst = `about ${cur.code} ${val.toLocaleString()}`;
+  }
+  return {
+    primary: `$${usd} USD`,
+    secondary: localEst,
+    usd,
+  };
 }
