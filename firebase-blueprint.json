@@ -1,0 +1,303 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered user profile, theme preference, country, and unlocked bot/signal entitlements.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address",
+          "maxLength": 160
+        },
+        "country": {
+          "type": "string",
+          "description": "ISO 2-letter country code (e.g. KE, US, GB)",
+          "minLength": 2,
+          "maxLength": 8
+        },
+        "theme": {
+          "type": "string",
+          "enum": ["light", "dark"],
+          "description": "Preferred UI color theme"
+        },
+        "licenses": {
+          "type": "array",
+          "description": "List of unlocked product IDs (max 50)"
+        },
+        "signalSubEnd": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds when forex signals subscription expires"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last profile update timestamp"
+        }
+      },
+      "required": ["uid", "displayName", "email", "country", "theme", "licenses", "signalSubEnd", "createdAt", "updatedAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Payment order for M-Pesa STK Push, M-Pesa Pochi, or PayPal checkout.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "itemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "method": {
+          "type": "string",
+          "enum": ["mpesa_stk", "mpesa_pochi", "paypal"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "paid", "failed", "cancelled"]
+        },
+        "amountKsh": {
+          "type": "number"
+        },
+        "amountUsd": {
+          "type": "number"
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "userEmail", "itemId", "itemName", "method", "status", "amountKsh", "amountUsd", "phone", "reference", "createdAt", "updatedAt"]
+    },
+    "Signal": {
+      "title": "Signal",
+      "description": "SMC/ICT Forex or Volatility trade signal published by TRADERSPRO254.",
+      "type": "object",
+      "properties": {
+        "pair": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["BUY", "SELL"]
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "stopLoss": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "takeProfit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "timeframe": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "strategy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "tp_hit", "sl_hit", "closed"]
+        },
+        "published": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["pair", "direction", "entry", "stopLoss", "takeProfit", "timeframe", "strategy", "status", "published", "notes", "authorId", "createdAt", "updatedAt"]
+    },
+    "Mt5Config": {
+      "title": "Mt5Config",
+      "description": "Remote control configuration for MT5 Expert Advisors.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "eaId": {
+          "type": "string",
+          "enum": ["xauusd-system", "straddle-system"]
+        },
+        "eaKey": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 16
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["intraday", "scalping"]
+        },
+        "lotSize": {
+          "type": "number"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "eaId", "eaKey", "symbol", "mode", "lotSize", "enabled", "createdAt", "updatedAt"]
+    },
+    "TradeLog": {
+      "title": "TradeLog",
+      "description": "Executed Deriv bot contract history entry.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "botId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "botName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "market": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "contract": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "stake": {
+          "type": "number"
+        },
+        "profit": {
+          "type": "number"
+        },
+        "accountType": {
+          "type": "string",
+          "enum": ["demo", "real"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "botId", "botName", "market", "contract", "stake", "profit", "accountType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile, UI theme, country preference, and purchased product licenses."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "M-Pesa and PayPal payment orders."
+    },
+    "/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "Live SMC/ICT Forex trade signals."
+    },
+    "/mt5Configs/{configId}": {
+      "schema": { "$ref": "#/entities/Mt5Config" },
+      "description": "Remote MT5 Expert Advisor settings per user."
+    },
+    "/tradeLogs/{logId}": {
+      "schema": { "$ref": "#/entities/TradeLog" },
+      "description": "Deriv bot execution logs per user."
+    }
+  }
+}

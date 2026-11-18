@@ -1,0 +1,6 @@
+{
+  "name": "TRADERSPRO254",
+  "description": "Deriv trading bots, automated digit & accumulator strategies, MT5 Expert Advisors, and SMC/ICT forex signals with Firebase, M-Pesa, and PayPal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
